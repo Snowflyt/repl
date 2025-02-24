@@ -292,7 +292,7 @@ export class Sandbox {
     // Replace trailing semicolon with a space
     let trimmed = statement.trimEnd();
     while (trimmed.endsWith(";")) {
-      statement = trimmed + " " + statement.slice(trimmed.length + 1);
+      statement = trimmed.slice(0, -1) + " " + statement.slice(trimmed.length + 1);
       trimmed = statement.trimEnd();
     }
 
