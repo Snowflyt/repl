@@ -55,12 +55,23 @@ const App: React.FC = () => {
       setShowLoading(true);
     }, 500);
 
-    void import("./sandbox").then(({ Sandbox }) => {
-      sandboxRef.current = new Sandbox();
-      setIsLoading(false);
-      clearTimeout(loadingTimer);
-      setTimeout(() => inputRef.current?.focus(), 100);
-    });
+    // Use `requestIdleCallback` if available to avoid blocking UI
+    if ("requestIdleCallback" in window)
+      window.requestIdleCallback(() => {
+        import("./sandbox").then(({ Sandbox }) => {
+          sandboxRef.current = new Sandbox();
+          setIsLoading(false);
+          clearTimeout(loadingTimer);
+          setTimeout(() => inputRef.current?.focus(), 100);
+        });
+      });
+    else
+      import("./sandbox").then(({ Sandbox }) => {
+        sandboxRef.current = new Sandbox();
+        setIsLoading(false);
+        clearTimeout(loadingTimer);
+        setTimeout(() => inputRef.current?.focus(), 100);
+      });
 
     return () => clearTimeout(loadingTimer);
   }, []);
