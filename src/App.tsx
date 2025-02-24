@@ -434,7 +434,7 @@ const App: React.FC = () => {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-[#3d2530] bg-[#1a1520]/50 p-4 backdrop-blur-sm">
+      <div className="max-h-[66vh] overflow-y-auto border-t border-[#3d2530] bg-[#1a1520]/50 p-4 backdrop-blur-sm">
         <div className="flex items-start rounded-lg bg-[#1a1520]/70 p-2">
           <span className="flex h-7 items-center px-1 pt-0.5 font-mono text-sm text-[#ff6e6e] select-none md:text-lg">
             {
