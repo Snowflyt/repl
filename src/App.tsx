@@ -273,9 +273,20 @@ const App: React.FC = () => {
   const updateRows = (text: string) => {
     if (!measureRef.current) return;
 
-    measureRef.current.textContent = text.endsWith("\n") ? text + " " : text || " ";
+    // Replace each empty line with a space so that empty lines are measured properly.
+    measureRef.current.textContent =
+      text ?
+        text
+          .split("\n")
+          .map((line) => (line === "" ? " " : line))
+          .join("\n")
+      : " ";
+
     const totalHeight = measureRef.current.scrollHeight;
     const lineHeight = parseInt(window.getComputedStyle(measureRef.current).lineHeight);
+
+    // Clear the content to prevent vertical scrollbar from appearing
+    measureRef.current.textContent = "";
 
     const actualRows = Math.ceil(totalHeight / lineHeight);
     setRows(Math.max(1, actualRows));
