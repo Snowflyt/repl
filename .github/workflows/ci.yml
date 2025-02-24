@@ -61,6 +61,9 @@ jobs:
       - name: Build the project
         run: npm run build
 
+      - name: Add CNAME file for js.org
+        run: echo "repl.js.org" > ./dist/CNAME
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
