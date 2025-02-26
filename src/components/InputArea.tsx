@@ -123,7 +123,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     <div className="max-h-[66vh] overflow-y-auto border-t border-[#3d2530] bg-[#1a1520]/50 p-4 backdrop-blur-sm">
       <div className="flex items-start rounded-lg bg-[#1a1520]/70 p-2">
         {/* Icon */}
-        <span className="flex h-7 items-center px-1 pt-0.5 font-mono text-sm text-[#ff6e6e] select-none md:text-lg">
+        <span className="flex h-7 items-center px-1 pt-0.5 font-mono text-sm text-[#ff6e6e] select-none md:text-base 2xl:text-lg">
           {
             <Icon
               icon={showExecuting ? "svg-spinners:180-ring" : "material-symbols:arrow-forward-ios"}
@@ -136,7 +136,7 @@ const InputArea: React.FC<InputAreaProps> = ({
         <div className="relative ml-2 w-full">
           <pre
             ref={measureRef}
-            className="pointer-events-none invisible absolute -left-full w-full font-mono text-sm leading-6 break-all whitespace-pre-wrap sm:leading-7 md:text-lg"
+            className="pointer-events-none invisible absolute -left-full w-full font-mono text-sm leading-6 break-all whitespace-pre-wrap sm:leading-7 md:text-base 2xl:text-lg"
           />
 
           <textarea
@@ -198,13 +198,13 @@ const InputArea: React.FC<InputAreaProps> = ({
               setInput(newValue);
               updateRows(newValue);
             }}
-            className="w-full resize-none appearance-none bg-transparent font-mono text-sm leading-6 break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none sm:leading-7 md:text-lg"
+            className="w-full resize-none appearance-none bg-transparent font-mono text-sm leading-6 break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none sm:leading-7 md:text-base 2xl:text-lg"
             style={{ WebkitTextFillColor: "transparent" }}
             placeholder={getPlaceholder()}
             rows={rows}
             spellCheck={false}
           />
-          <pre className="pointer-events-none absolute top-0 left-0 w-full font-mono text-sm leading-6 break-all whitespace-pre-wrap text-gray-100 sm:leading-7 md:text-lg">
+          <pre className="pointer-events-none absolute top-0 left-0 w-full font-mono text-sm leading-6 break-all whitespace-pre-wrap text-gray-100 sm:leading-7 md:text-base 2xl:text-lg">
             <code
               dangerouslySetInnerHTML={{
                 __html:
