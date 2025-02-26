@@ -41,147 +41,102 @@ export class Sandbox {
       ts.ScriptKind.JS,
     );
 
+    const variables: string[] = [];
+    let codeToExecute = "";
+
     // Traverse every statement in the AST
     for (let i = 0; i < sourceFile.statements.length; i++) {
       const statement = sourceFile.statements[i]!;
       const isLast = i === sourceFile.statements.length - 1;
 
-      if (ts.isVariableStatement(statement)) {
-        await this.#processVariableStatement(statement);
-        continue;
-      }
+      Array.prototype.push.apply(variables, this.#extractDeclaredVariables(statement));
 
-      if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
-        await this.#processFunctionOrClassDeclaration(statement);
-        continue;
-      }
-
-      if (this.#isControlFlowStatement(statement)) {
-        await this.#run(statement.getText());
-        continue;
-      }
-
-      // Process as an expression; return its result
-      const result = (await this.#eval(statement.getText())).result;
-      if (isLast) return Option.some(result);
-    }
-
-    return Option.none();
-  }
-
-  async #processVariableStatement(statement: ts.VariableStatement): Promise<void> {
-    for (const decl of statement.declarationList.declarations) {
-      if (!decl.initializer) throw new Error("Variable declaration must have an initializer");
-
-      const evalRes = (await this.#eval(decl.initializer.getText())).result;
-
-      if (ts.isObjectBindingPattern(decl.name)) {
-        await this.#processObjectDestructuring(decl.name, evalRes);
-      } else if (ts.isArrayBindingPattern(decl.name)) {
-        await this.#processArrayDestructuring(decl.name, evalRes);
+      if (
+        isLast &&
+        !ts.isVariableStatement(statement) &&
+        !ts.isFunctionDeclaration(statement) &&
+        !ts.isClassDeclaration(statement) &&
+        !this.#isControlFlowStatement(statement)
+      ) {
+        codeToExecute +=
+          "const __repl_result___ = " + this.#removeModuleSyntax(statement.getText());
+        variables.push("__repl_result___");
       } else {
-        const varName = decl.name.getText();
-        if (typeof evalRes === "function")
-          Object.defineProperty(evalRes, "name", { value: varName, configurable: true });
-        this.#context[varName] = evalRes;
+        codeToExecute += this.#removeModuleSyntax(statement.getText());
       }
     }
+
+    codeToExecute += `; return { ${variables.join(", ")} };`;
+
+    let result: Record<string, unknown>;
+    try {
+      result = this.#evalSync("return (() => { " + codeToExecute + " })();") as never;
+    } catch (error) {
+      if (error instanceof SyntaxError)
+        result = (await this.#evalAsync(
+          "return await (async () => { " + codeToExecute + " })();",
+        )) as never;
+      else throw error;
+    }
+
+    for (const [key, value] of Object.entries(result)) {
+      if (key === "__repl_result___") continue;
+      this.#context[key] = value;
+    }
+
+    return "__repl_result___" in result ? Option.some(result.__repl_result___) : Option.none();
   }
 
-  async #processObjectDestructuring(
-    binding: ts.ObjectBindingPattern,
-    evalRes: unknown,
-  ): Promise<void> {
-    const assignedProps = new Set<string>();
-    for (const element of binding.elements) {
-      // Rest element (e.g., ...rest)
-      if (element.dotDotDotToken) {
-        const varName = element.name.getText();
-        const rest: Record<string, unknown> = {};
-        for (const key in evalRes as any) {
-          if (!assignedProps.has(key)) {
-            rest[key] = (evalRes as any)[key];
-          }
+  /**
+   * Extracts all variable names declared in a statement, including nested destructuring patterns.
+   * @param statement The TypeScript statement to analyze.
+   * @returns An array of declared variable names.
+   */
+  #extractDeclaredVariables(statement: ts.Statement): string[] {
+    const variables: string[] = [];
+
+    // Handle variable declarations (let, const, var)
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        this.#extractBindingNames(declaration.name, variables);
+      }
+    }
+    // Handle function declarations
+    else if (ts.isFunctionDeclaration(statement) && statement.name) {
+      variables.push(statement.name.text);
+    }
+    // Handle class declarations
+    else if (ts.isClassDeclaration(statement) && statement.name) {
+      variables.push(statement.name.text);
+    }
+
+    return variables;
+  }
+
+  /**
+   * Recursively extracts names from a binding pattern (identifier, object or array pattern).
+   * @param bindingName The binding pattern node.
+   * @param variables Array to collect variable names.
+   */
+  #extractBindingNames(bindingName: ts.BindingName, variables: string[]): void {
+    // Simple variable names
+    if (ts.isIdentifier(bindingName)) {
+      variables.push(bindingName.text);
+    }
+    // Object destructuring (const { a, b: c, ...rest } = ...)
+    else if (ts.isObjectBindingPattern(bindingName)) {
+      for (const element of bindingName.elements)
+        this.#extractBindingNames(element.name, variables);
+    }
+    // Array destructuring (const [, b, ...rest] = ...)
+    else if (ts.isArrayBindingPattern(bindingName)) {
+      for (const element of bindingName.elements) {
+        if (ts.isOmittedExpression(element)) {
+          // Skip empty slots [, , c]
+          continue;
         }
-        this.#context[varName] = rest;
-        continue;
+        this.#extractBindingNames(element.name, variables);
       }
-
-      // Determine the property key and the extracted value
-      let key: string;
-      let value: unknown;
-      if (element.propertyName) {
-        // For renaming: { original: alias = default }
-        key = element.propertyName.getText();
-        value = (evalRes as any)[key];
-      } else {
-        // For shorthand: { foo = default }
-        key = element.name.getText();
-        value = (evalRes as any)[key];
-      }
-
-      // If value is undefined and a default initializer exists, evaluate the default.
-      if (value === undefined && element.initializer)
-        value = (await this.#eval(element.initializer.getText())).result;
-
-      // If there is a nested binding pattern, process it recursively.
-      if (ts.isObjectBindingPattern(element.name)) {
-        await this.#processObjectDestructuring(element.name, value);
-      } else if (ts.isArrayBindingPattern(element.name)) {
-        await this.#processArrayDestructuring(element.name, value);
-      } else {
-        // Finally assign value to context.
-        const varName = element.name.getText();
-        this.#context[varName] = value;
-      }
-      // Track the property as processed.
-      assignedProps.add(key);
-    }
-  }
-
-  async #processArrayDestructuring(
-    binding: ts.ArrayBindingPattern,
-    evalRes: unknown,
-  ): Promise<void> {
-    if (!Array.isArray(evalRes)) throw new Error("Array destructuring assignment must be an array");
-
-    let index = 0;
-    for (const element of binding.elements) {
-      // Skip omitted expressions (e.g., [ , a ])
-      if (ts.isOmittedExpression(element)) {
-        index++;
-        continue;
-      }
-      // Rest element (e.g., ...rest)
-      if (element.dotDotDotToken) {
-        const varName = element.getText().replace("...", "").trim();
-        this.#context[varName] = (evalRes as any).slice(index);
-      } else {
-        const varName = element.name.getText();
-        let value = (evalRes as any)[index];
-        // Handle default initializer if value is undefined
-        if (value === undefined && element.initializer)
-          value = (await this.#eval(element.initializer.getText())).result;
-        // If there is a nested binding pattern, process it recursively.
-        if (ts.isObjectBindingPattern(element.name)) {
-          await this.#processObjectDestructuring(element.name, value);
-        } else if (ts.isArrayBindingPattern(element.name)) {
-          await this.#processArrayDestructuring(element.name, value);
-        } else {
-          // Finally assign the value to the context.
-          this.#context[varName] = value;
-        }
-        index++;
-      }
-    }
-  }
-
-  async #processFunctionOrClassDeclaration(
-    statement: ts.FunctionDeclaration | ts.ClassDeclaration,
-  ): Promise<void> {
-    const name = statement.name?.getText();
-    if (name) {
-      this.#context[name] = (await this.#eval(statement.getText())).result;
     }
   }
 
@@ -240,63 +195,37 @@ export class Sandbox {
   }
 
   /**
-   * Run a JavaScript statement.
-   * @param code The code to run.
-   */
-  async #run(code: string): Promise<void> {
-    code = this.#processStatement(code).trim();
-    if (!code) return;
-
-    const context = this.#prepareFunctionContext();
-    await new AsyncFunction(...Object.keys(context), code)(...Object.values(context));
-  }
-
-  /**
-   * Evaluate a JavaScript expression.
-   * @param code The code to evaluate.
-   * @returns The result of the evaluation.
-   */
-  async #eval(code: string): Promise<{ result: unknown }> {
-    code = this.#processStatement(code);
-
-    const context = this.#prepareFunctionContext();
-    try {
-      return {
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval
-        result: new Function(...Object.keys(context), `return (${code})`)(
-          ...Object.values(context),
-        ),
-      };
-    } catch (error) {
-      if (error instanceof SyntaxError)
-        return {
-          result: await new AsyncFunction(...Object.keys(context), `return (${code})`)(
-            ...Object.values(context),
-          ),
-        };
-      throw error;
-    }
-  }
-
-  /**
-   * Replace module syntax and trailing semicolons with whitespace from a statement.
+   * Replace module syntax with whitespace from a JavaScript statement.
    * @param statement The statement to process.
    * @returns The processed statement.
    */
-  #processStatement(statement: string): string {
+  #removeModuleSyntax(statement: string): string {
     // Remove export and default keywords
     // (Replace with spaces to keep error message positions consistent)
     statement = statement.replace(/^(\s*export\s+)default(\s+)/, "$1      $2");
     statement = statement.replace(/^(\s*)export(\s+)/, "$1      $2");
-
-    // Replace trailing semicolon with a space
-    let trimmed = statement.trimEnd();
-    while (trimmed.endsWith(";")) {
-      statement = trimmed.slice(0, -1) + " " + statement.slice(trimmed.length + 1);
-      trimmed = statement.trimEnd();
-    }
-
     return statement;
+  }
+
+  /**
+   * Evaluate a snippet of synchronous JavaScript code.
+   * @param code The code to evaluate.
+   * @returns The result of the evaluation.
+   */
+  #evalSync(code: string): unknown {
+    const context = this.#prepareFunctionContext();
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    return new Function(...Object.keys(context), code)(...Object.values(context));
+  }
+
+  /**
+   * Evaluate a snippet of asynchronous JavaScript code.
+   * @param code The code to evaluate.
+   * @returns The result of the evaluation.
+   */
+  async #evalAsync(code: string): Promise<unknown> {
+    const context = this.#prepareFunctionContext();
+    return await new AsyncFunction(...Object.keys(context), code)(...Object.values(context));
   }
 
   /**
