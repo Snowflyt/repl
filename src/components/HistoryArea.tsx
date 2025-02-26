@@ -2,7 +2,7 @@ import { Icon } from "@iconify/react";
 import { AnsiUp } from "ansi_up";
 import { clsx } from "clsx";
 import { transparentize } from "color2k";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { match } from "ts-pattern";
 
 import { useHistoryStore } from "../stores/history";
@@ -19,9 +19,18 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory, ref }) 
   const history = useHistoryStore((state) => state.history);
   const inputHistory = useMemo(() => history.filter((e) => e.type === "input"), [history]);
 
+  const historyAreaRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to the bottom of the history area when the history changes
+  useEffect(() => {
+    const element = ref && "current" in ref && ref.current ? ref.current : historyAreaRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [history, ref]);
+
   return (
     <div
-      ref={ref}
+      ref={ref ?? historyAreaRef}
       className="flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
       {history.map((entry, index) => (
         <div key={index} className="group mb-2">
