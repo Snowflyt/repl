@@ -14,6 +14,7 @@ export function show(value: unknown, options: ShowOptions = {}): string {
     depth: 4,
     colors: true,
 
+    // Serializers for common Web APIs
     serializers: [
       serializer({
         if: (value) => value instanceof Promise,
