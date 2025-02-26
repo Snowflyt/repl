@@ -103,6 +103,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     }, 10);
     await sandboxStore.execute(input);
     clearTimeout(executingTimer);
+    setShowExecuting(false);
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (!inputReset) resetInput();
   }, [input, resetInput]);
