@@ -77,6 +77,7 @@ export class Sandbox {
 
       Array.prototype.push.apply(variables, this.#extractDeclaredVariables(statement));
 
+      if (codeToExecute.trim() && !codeToExecute.trimEnd().endsWith(";")) codeToExecute += ";";
       if (
         isLast &&
         !ts.isVariableStatement(statement) &&
@@ -85,27 +86,28 @@ export class Sandbox {
         !this.#isControlFlowStatement(statement)
       ) {
         codeToExecute +=
-          "const __repl_result___ = " + this.#removeModuleSyntax(statement.getText());
+          "\nconst __repl_result___ = " + this.#removeModuleSyntax(statement.getText()) + ";";
         variables.push("__repl_result___");
       } else {
-        codeToExecute += this.#removeModuleSyntax(statement.getText());
+        codeToExecute += "\n" + this.#removeModuleSyntax(statement.getText());
       }
     }
 
     // Prepend the transformed imports to the code
-    if (imports.length > 0) {
-      codeToExecute = imports.join("\n") + "\n" + codeToExecute;
-    }
+    if (imports.length > 0)
+      codeToExecute =
+        imports.join("\n") + (codeToExecute.startsWith("\n") ? "" : "\n") + codeToExecute;
 
-    codeToExecute += `; return { ${variables.join(", ")} };`;
+    if (codeToExecute.trim() && !codeToExecute.trimEnd().endsWith(";")) codeToExecute += ";";
+    codeToExecute += `\nreturn { ${variables.join(", ")} };`;
 
     let result: Record<string, unknown>;
     try {
-      result = this.#evalSync("return (() => { " + codeToExecute + " })();") as never;
+      result = this.#evalSync("return (() => {\n" + codeToExecute + "\n})();") as never;
     } catch (error) {
       if (error instanceof SyntaxError)
         result = (await this.#evalAsync(
-          "return await (async () => { " + codeToExecute + " })();",
+          "return await (async () => {\n" + codeToExecute + "\n})();",
         )) as never;
       else throw error;
     }
@@ -146,7 +148,7 @@ export class Sandbox {
 
     // Handle side-effect import: import 'module';
     if (!importDecl.importClause) {
-      return { code: `await import(\`${url}\`);`, variables };
+      return { code: `await import("${url}");`, variables };
     }
 
     const { name, namedBindings } = importDecl.importClause;
@@ -154,14 +156,14 @@ export class Sandbox {
 
     // Handle default import: import defaultExport from 'module';
     if (name) {
-      code += `const ${name.text} = (await import(\`${url}\`)).default;`;
+      code += `const ${name.text} = (await import("${url}")).default;`;
       variables.push(name.text);
     }
 
     // Handle namespace import: import * as name from 'module';
     if (namedBindings && ts.isNamespaceImport(namedBindings)) {
       if (code) code += "\n";
-      code += `const ${namedBindings.name.text} = await import(\`${url}\`);`;
+      code += `const ${namedBindings.name.text} = await import("${url}");`;
       variables.push(namedBindings.name.text);
     }
 
@@ -183,7 +185,7 @@ export class Sandbox {
         .join(", ");
 
       if (code) code += "\n";
-      code += `const { ${imports} } = await import(\`${url}\`);`;
+      code += `const { ${imports} } = await import("${url}");`;
     }
 
     return { code, variables };
