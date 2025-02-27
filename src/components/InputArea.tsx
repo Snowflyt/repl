@@ -13,6 +13,7 @@ export interface InputAreaProps {
 }
 export interface InputAreaRef {
   focus: () => void;
+  rerun: (input: string) => Promise<void>;
 }
 
 const InputArea: React.FC<InputAreaProps> = ({
@@ -40,14 +41,6 @@ const InputArea: React.FC<InputAreaProps> = ({
     element.focus();
     element.setSelectionRange(element.value.length, element.value.length);
   }, []);
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      focus: refocus,
-    }),
-    [refocus],
-  );
 
   const measureRef = useRef<HTMLPreElement>(null);
 
@@ -105,20 +98,34 @@ const InputArea: React.FC<InputAreaProps> = ({
   const isExecuting = useSandboxStore((state) => state.isExecuting);
   const [showExecuting, setShowExecuting] = useState(false);
 
-  const executeCode = useCallback(async () => {
-    let inputReset = false;
-    const executingTimer = setTimeout(() => {
-      setShowExecuting(true);
-      inputReset = true;
-      resetInput();
-    }, 10);
-    await sandboxStore.execute(input);
-    clearTimeout(executingTimer);
-    setShowExecuting(false);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!inputReset) resetInput();
-  }, [input, resetInput]);
+  const executeCode = useCallback(
+    async (customInput?: string) => {
+      let inputReset = false;
+      const executingTimer = setTimeout(() => {
+        setShowExecuting(true);
+        inputReset = true;
+        if (!customInput) resetInput();
+      }, 10);
+      await sandboxStore.execute(customInput || input);
+      clearTimeout(executingTimer);
+      setShowExecuting(false);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (!customInput && !inputReset) resetInput();
+    },
+    [input, resetInput],
+  );
 
+  /* Expose methods */
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: refocus,
+      rerun: (input) => executeCode(input),
+    }),
+    [refocus, executeCode],
+  );
+
+  /* Miscellaneous */
   const getPlaceholder = useCallback(() => {
     const isMobile = window.innerWidth < 640;
     if (isExecuting) {

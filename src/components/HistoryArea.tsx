@@ -8,13 +8,16 @@ import { match } from "ts-pattern";
 import { useHistoryStore } from "../stores/history";
 import { highlightCode } from "../utils/highlight";
 
+import type { InputAreaRef } from "./InputArea";
+
 const ansi_up = new AnsiUp();
 
 interface HistoryAreaProps {
+  inputAreaRef?: React.RefObject<InputAreaRef | null>;
   onJumpToInputHistory?: (index: number) => void;
 }
 
-const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory }) => {
+const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHistory }) => {
   const history = useHistoryStore((state) => state.history);
   const inputHistory = useMemo(() => history.filter((e) => e.type === "input"), [history]);
 
@@ -37,6 +40,7 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory }) => {
             .with({ type: "input" }, ({ value }) => (
               <InputMessage
                 value={value}
+                inputAreaRef={inputAreaRef}
                 onJump={(() => {
                   const index = inputHistory.findIndex((e) => e === entry);
                   return () => onJumpToInputHistory?.(index);
@@ -56,11 +60,16 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory }) => {
 
 export default HistoryArea;
 
-const ButtonGroup: React.FC<{ input: string; onJump?: () => void }> = ({ input, onJump }) => {
+const ButtonGroup: React.FC<{
+  input: string;
+  inputAreaRef?: React.RefObject<InputAreaRef | null>;
+  onJump?: () => void;
+}> = ({ input, inputAreaRef, onJump }) => {
   const [copied, setCopied] = useState(false);
 
   return (
     <div className="absolute top-0 right-2 flex space-x-1.5 p-0.5">
+      {/* Copy to clipboard */}
       <button
         type="button"
         title="Copy to clipboard"
@@ -76,6 +85,18 @@ const ButtonGroup: React.FC<{ input: string; onJump?: () => void }> = ({ input, 
         />
       </button>
 
+      {/* Rerun */}
+      <button
+        type="button"
+        title="Rerun"
+        onClick={() => {
+          void inputAreaRef?.current?.rerun(input);
+        }}
+        className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
+        <Icon icon="material-symbols:replay" className="size-4" />
+      </button>
+
+      {/* Load into input */}
       <button
         type="button"
         title="Load into input"
@@ -87,7 +108,11 @@ const ButtonGroup: React.FC<{ input: string; onJump?: () => void }> = ({ input, 
   );
 };
 
-const InputMessage: React.FC<{ value: string; onJump?: () => void }> = ({ onJump, value }) => (
+const InputMessage: React.FC<{
+  value: string;
+  inputAreaRef?: React.RefObject<InputAreaRef | null>;
+  onJump?: () => void;
+}> = ({ inputAreaRef, onJump, value }) => (
   <div className="flex flex-row">
     <div className="flex flex-col">
       {value.split("\n").map((_, i) => (
@@ -101,7 +126,7 @@ const InputMessage: React.FC<{ value: string; onJump?: () => void }> = ({ onJump
       <pre className="w-full bg-transparent break-all whitespace-pre-wrap">
         <code dangerouslySetInnerHTML={{ __html: highlightCode(value) }} />
       </pre>
-      <ButtonGroup input={value} onJump={onJump} />
+      <ButtonGroup input={value} inputAreaRef={inputAreaRef} onJump={onJump} />
     </div>
   </div>
 );
