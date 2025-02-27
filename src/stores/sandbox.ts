@@ -113,6 +113,7 @@ const sandboxStore = createStore({
             import("../utils/sandbox")
               .then(({ Sandbox }) => {
                 sandbox = new Sandbox();
+                void sandbox.checkCdnAccessibility();
                 sandbox.addConsoleListener(consoleListener);
                 this.isLoading = false;
               })
@@ -122,6 +123,7 @@ const sandboxStore = createStore({
 
       const { Sandbox } = await import("../utils/sandbox");
       sandbox = new Sandbox();
+      void sandbox.checkCdnAccessibility();
       sandbox.addConsoleListener(consoleListener);
       this.isLoading = false;
     },
