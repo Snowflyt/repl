@@ -1,15 +1,18 @@
 import { Icon } from "@iconify/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
 import { useHistoryStore } from "../stores/history";
 import sandboxStore, { useSandboxStore } from "../stores/sandbox";
 import { highlightCode } from "../utils/highlight";
 
 export interface InputAreaProps {
-  ref?: React.Ref<HTMLTextAreaElement>;
+  ref?: React.Ref<InputAreaRef>;
 
   inputHistoryIndex: number;
   onInputHistoryIndexChange: (index: number) => void;
+}
+export interface InputAreaRef {
+  focus: () => void;
 }
 
 const InputArea: React.FC<InputAreaProps> = ({
@@ -29,14 +32,22 @@ const InputArea: React.FC<InputAreaProps> = ({
     tempInputRef.current = "";
   }, [onInputHistoryIndexChange]);
 
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputAreaRef = useRef<HTMLTextAreaElement>(null);
 
   const refocus = useCallback(() => {
-    const element = ref && "current" in ref && ref.current ? ref.current : inputRef.current;
+    const element = inputAreaRef.current;
     if (!element) return;
     element.focus();
     element.setSelectionRange(element.value.length, element.value.length);
-  }, [ref]);
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: refocus,
+    }),
+    [refocus],
+  );
 
   const measureRef = useRef<HTMLPreElement>(null);
 
@@ -141,7 +152,7 @@ const InputArea: React.FC<InputAreaProps> = ({
           />
 
           <textarea
-            ref={ref ?? inputRef}
+            ref={inputAreaRef}
             value={input}
             disabled={isLoading}
             onKeyDown={(e) => {

@@ -11,11 +11,10 @@ import { highlightCode } from "../utils/highlight";
 const ansi_up = new AnsiUp();
 
 interface HistoryAreaProps {
-  ref?: React.Ref<HTMLDivElement>;
   onJumpToInputHistory?: (index: number) => void;
 }
 
-const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory, ref }) => {
+const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory }) => {
   const history = useHistoryStore((state) => state.history);
   const inputHistory = useMemo(() => history.filter((e) => e.type === "input"), [history]);
 
@@ -23,14 +22,14 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ onJumpToInputHistory, ref }) 
 
   // Scroll to the bottom of the history area when the history changes
   useEffect(() => {
-    const element = ref && "current" in ref && ref.current ? ref.current : historyAreaRef.current;
+    const element = historyAreaRef.current;
     if (!element) return;
     element.scrollTop = element.scrollHeight;
-  }, [history, ref]);
+  }, [history]);
 
   return (
     <div
-      ref={ref ?? historyAreaRef}
+      ref={historyAreaRef}
       className="flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
       {history.map((entry, index) => (
         <div key={index} className="group mb-2">
