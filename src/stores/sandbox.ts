@@ -1,6 +1,6 @@
 import { Option } from "effect";
 
-import type { ConsoleListener, Sandbox } from "../utils/sandbox";
+import type { Sandbox } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
 import { createStore, hookify } from "../utils/store";
 
@@ -25,76 +25,124 @@ const indent = (str: string) =>
 const showArgs = (args: unknown[]) =>
   args.map((arg) => (typeof arg === "string" ? arg : show(arg))).join(" ");
 
-const consoleListener: ConsoleListener = (type, ...args) => {
-  if (type === "clear") {
+let consoleMocked = false;
+const mockConsole = () => {
+  if (consoleMocked) return;
+  consoleMocked = true;
+
+  const originalConsole = console;
+
+  console.clear = function clear() {
     clearHistory();
-  } else if (type === "assert") {
-    if (args[0] === false)
-      appendOutput("error", indent("Assertion failed: " + showArgs(args.slice(1))));
-  } else if (type === "count") {
-    const label = String(args[0] ?? "default");
+  };
+
+  console.assert = function assert(condition: unknown, ...args: unknown[]) {
+    if (condition === false) appendOutput("error", indent("Assertion failed: " + showArgs(args)));
+  };
+
+  console.count = function count(label: string) {
     const count = consoleState.count[label] ?? 0;
     consoleState.count[label] = count + 1;
     appendOutput(indent(`${label}: ${count + 1}`));
-  } else if (type === "countReset") {
-    const label = args[0] as string;
+  };
+  console.countReset = function countReset(label: string) {
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete consoleState.count[label];
-  } else if (type === "dir" || type === "dirxml") {
-    const item = args[0];
-    const options = args[1] != null ? args[1] : {};
+  };
+
+  console.dir = function dir(item: unknown, options: Record<string, unknown> = {}) {
     appendOutput(indent(show(item, options)));
-  } else if (type === "error") {
+  };
+  console.dirxml = function dirxml(item: unknown, options: Record<string, unknown> = {}) {
+    appendOutput(indent(show(item, options)));
+  };
+
+  console.error = function error(...args: unknown[]) {
     // TODO: Support error stack
     appendOutput("error", indent(showArgs(args)));
-  } else if (type === "group" || type === "groupCollapsed") {
+  };
+
+  console.group = function group(...args: unknown[]) {
     // TODO: Support group labels, indent line and collapsed groups.
     // Currently, only group indent level is supported.
     consoleState.level++;
     appendOutput(indent(showArgs(args)));
-  } else if (type === "groupEnd") {
-    consoleState.level = Math.max(0, consoleState.level - 1);
-  } else if (type === "info") {
-    appendOutput("info", indent(showArgs(args)));
-  } else if (type === "debug" || type === "log") {
+  };
+  console.groupCollapsed = function groupCollapsed(...args: unknown[]) {
+    // TODO: Support group labels, indent line and collapsed groups.
+    // Currently, only group indent level is supported.
+    consoleState.level++;
     appendOutput(indent(showArgs(args)));
-  } else if (type === "trace") {
+  };
+  console.groupEnd = function groupEnd() {
+    consoleState.level = Math.max(0, consoleState.level - 1);
+  };
+
+  console.info = function info(...args: unknown[]) {
+    appendOutput("info", indent(showArgs(args)));
+  };
+
+  console.debug = function debug(...args: unknown[]) {
+    appendOutput(indent(showArgs(args)));
+  };
+
+  console.log = function log(...args: unknown[]) {
+    appendOutput(indent(showArgs(args)));
+  };
+
+  console.trace = function trace(...args: unknown[]) {
     // TODO: Support trace stack
     appendOutput(indent("Trace: " + showArgs(args)));
-  } else if (type === "table") {
-    if (args.length > 1 && args[1] !== undefined && !Array.isArray(args[1])) {
+  };
+
+  console.table = function table(data: unknown, properties?: string[]) {
+    if (properties !== undefined && !Array.isArray(properties)) {
       appendError(
         new TypeError(
           'The "properties" argument must be an instance of Array. received ' +
-            (args[1] === null ? "null" : `type ${typeof args[1]}`),
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            (properties === null ? "null" : `type ${typeof properties}`),
         ),
       );
-    } else if (args[0] === null || typeof args[0] !== "object") {
-      appendOutput(indent(showArgs([args[0]])));
+    } else if (data === null || typeof data !== "object") {
+      appendOutput(indent(showArgs([data])));
     } else {
-      appendOutput(indent(showTable(args[0], args[1]?.map(String))));
+      appendOutput(indent(showTable(data, properties?.map(String))));
     }
-  } else if (type === "time") {
-    const label = String(args[0] ?? "default");
+  };
+
+  console.time = function time(label: string) {
     if (!consoleState.time[label]) consoleState.time[label] = new Date();
     else appendOutput("warn", indent(`Timer "${label}" already exists`));
-  } else if (type === "timeEnd" || type === "timeLog") {
-    const label = String(args[0] ?? "default");
+  };
+  console.timeEnd = function timeEnd(label: string) {
     const start = consoleState.time[label];
     if (start) {
       const timeSpent = new Date().getTime() - start.getTime();
-      if (type === "timeEnd")
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete consoleState.time[label];
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete consoleState.time[label];
       appendOutput(indent(`${label}: ${timeSpent}ms`));
     } else {
       appendOutput("warn", indent(`Timer "${label}" does not exist`));
     }
-  } else if (type === "timeStamp") {
-    console.timeStamp(...args);
-  } else if (type === "warn") {
+  };
+  console.timeLog = function timeLog(label: string) {
+    const start = consoleState.time[label];
+    if (start) {
+      const timeSpent = new Date().getTime() - start.getTime();
+      appendOutput(indent(`${label}: ${timeSpent}ms`));
+    } else {
+      appendOutput("warn", indent(`Timer "${label}" does not exist`));
+    }
+  };
+
+  console.timeStamp = function timeStamp(...args) {
+    originalConsole.timeStamp(...args);
+  };
+
+  console.warn = function warn(...args: unknown[]) {
     appendOutput("warn", indent(showArgs(args)));
-  }
+  };
 };
 
 const sandboxStore = createStore({
@@ -114,7 +162,7 @@ const sandboxStore = createStore({
               .then(({ Sandbox }) => {
                 sandbox = new Sandbox();
                 void sandbox.checkCdnAccessibility();
-                sandbox.addConsoleListener(consoleListener);
+                mockConsole();
                 this.isLoading = false;
               })
               .then(resolve, reject);
@@ -124,7 +172,7 @@ const sandboxStore = createStore({
       const { Sandbox } = await import("../utils/sandbox");
       sandbox = new Sandbox();
       void sandbox.checkCdnAccessibility();
-      sandbox.addConsoleListener(consoleListener);
+      mockConsole();
       this.isLoading = false;
     },
 

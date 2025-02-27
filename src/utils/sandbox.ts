@@ -12,21 +12,6 @@ export type ConsoleListener = <Type extends Exclude<keyof Console, "Console">>(
 export class Sandbox {
   #context: Record<string, unknown> = {};
 
-  #consoleListeners: ConsoleListener[] = [];
-  #mockConsole = new Proxy(console, {
-    get: (target, prop, receiver) => {
-      if (typeof prop !== "string" || typeof (console as any)[prop] !== "function")
-        return Reflect.get(target, prop, receiver);
-      return Object.defineProperty(
-        (...args: unknown[]) => {
-          this.#consoleListeners.forEach((listener) => listener(prop as any, ...args));
-        },
-        "name",
-        { value: prop, configurable: true },
-      );
-    },
-  });
-
   #useJsdMirror = false;
 
   /**
@@ -297,21 +282,6 @@ export class Sandbox {
   }
 
   /**
-   * Register a console listener.
-   * @param listener The listener.
-   */
-  addConsoleListener(listener: ConsoleListener): void {
-    this.#consoleListeners.push(listener);
-  }
-  /**
-   * Remove a console listener.
-   * @param listener The listener.
-   */
-  removeConsoleListener(listener: ConsoleListener): void {
-    this.#consoleListeners = this.#consoleListeners.filter((l) => l !== listener);
-  }
-
-  /**
    * Replace module syntax with whitespace from a JavaScript statement.
    * @param statement The statement to process.
    * @returns The processed statement.
@@ -352,8 +322,7 @@ export class Sandbox {
   #prepareFunctionContext(): Record<string, unknown> {
     return {
       globals: this.#context,
-      console: this.#mockConsole,
-      clear: this.#mockConsole.clear,
+      clear: console.clear,
       ...this.#context,
     };
   }

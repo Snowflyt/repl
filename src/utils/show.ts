@@ -94,7 +94,7 @@ export function show(value: unknown, options: ShowOptions = {}): string {
   });
 }
 
-export function showTable(data: object, properties: string[]): string {
+export function showTable(data: object, properties?: string[]): string {
   const primitiveColumn = Symbol("primitiveColumn");
   let columns = properties as (string | typeof primitiveColumn)[] | undefined;
   if (!columns) {
