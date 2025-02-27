@@ -124,7 +124,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     <div className="max-h-[66vh] overflow-y-auto border-t border-[#3d2530] bg-[#1a1520]/50 p-4 backdrop-blur-sm">
       <div className="flex items-start rounded-lg bg-[#1a1520]/70 p-2">
         {/* Icon */}
-        <span className="flex h-7 items-center px-1 pt-0.5 font-mono text-sm text-[#ff6e6e] select-none md:text-base 2xl:text-lg">
+        <span className="flex h-7 items-center px-1 font-mono text-sm text-[#ff6e6e] select-none md:text-base 2xl:text-lg">
           {
             <Icon
               icon={showExecuting ? "svg-spinners:180-ring" : "material-symbols:arrow-forward-ios"}
