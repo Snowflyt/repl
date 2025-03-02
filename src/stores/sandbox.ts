@@ -149,7 +149,7 @@ const sandboxStore = createStore({
   isLoading: false,
   isExecuting: false,
 
-  on: {
+  actions: {
     async load(): Promise<void> {
       if (sandbox || this.isLoading) return;
       this.isLoading = true;

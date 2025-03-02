@@ -8,7 +8,13 @@ import { createStore, hookify } from "../utils/store";
 const historyStore = createStore({
   history: [] as HistoryEntry[],
 
-  on: {
+  computed: {
+    inputHistory() {
+      return this.history.filter((entry) => entry.type === "input");
+    },
+  },
+
+  actions: {
     clear() {
       this.history = [];
     },

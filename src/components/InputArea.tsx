@@ -1,5 +1,5 @@
 import { Icon } from "@iconify/react";
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { useHistoryStore } from "../stores/history";
 import sandboxStore, { useSandboxStore } from "../stores/sandbox";
@@ -67,8 +67,7 @@ const InputArea: React.FC<InputAreaProps> = ({
   }, []);
 
   /* History */
-  const history = useHistoryStore((state) => state.history);
-  const inputHistory = useMemo(() => history.filter((e) => e.type === "input"), [history]);
+  const inputHistory = useHistoryStore((state) => state.inputHistory);
   const prevInputHistoryIndexRef = useRef(inputHistoryIndex);
 
   useEffect(() => {
@@ -94,8 +93,7 @@ const InputArea: React.FC<InputAreaProps> = ({
   }, [inputHistory, inputHistoryIndex, updateRows, refocus, input]);
 
   /* Sandbox */
-  const isLoading = useSandboxStore((state) => state.isLoading);
-  const isExecuting = useSandboxStore((state) => state.isExecuting);
+  const [isLoading, isExecuting] = useSandboxStore((state) => [state.isLoading, state.isExecuting]);
   const [showExecuting, setShowExecuting] = useState(false);
 
   const executeCode = useCallback(

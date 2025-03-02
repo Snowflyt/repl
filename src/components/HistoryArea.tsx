@@ -2,7 +2,7 @@ import { Icon } from "@iconify/react";
 import { AnsiUp } from "ansi_up";
 import { clsx } from "clsx";
 import { transparentize } from "color2k";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { match } from "ts-pattern";
 
 import { useHistoryStore } from "../stores/history";
@@ -18,8 +18,7 @@ interface HistoryAreaProps {
 }
 
 const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHistory }) => {
-  const history = useHistoryStore((state) => state.history);
-  const inputHistory = useMemo(() => history.filter((e) => e.type === "input"), [history]);
+  const [history, inputHistory] = useHistoryStore((state) => [state.history, state.inputHistory]);
 
   const historyAreaRef = useRef<HTMLDivElement>(null);
 

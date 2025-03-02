@@ -18,6 +18,7 @@
     "effect": "^3.13.2",
     "highlight.js": "^11.11.1",
     "immer": "^10.1.1",
+    "proxy-compare": "^3.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "showify": "^0.1.2",
