@@ -1,9 +1,10 @@
 import { Icon } from "@iconify/react";
+import { createStore } from "troza";
+import { hookify } from "troza/react";
 import { match } from "ts-pattern";
 
 import type { HistoryEntry } from "../types";
 import { show } from "../utils/show";
-import { createStore, hookify } from "../utils/store";
 
 const historyStore = createStore({
   history: [] as HistoryEntry[],

@@ -1,8 +1,9 @@
 import { Option } from "effect";
+import { createStore } from "troza";
+import { hookify } from "troza/react";
 
 import type { Sandbox } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
-import { createStore, hookify } from "../utils/store";
 
 import historyStore from "./history";
 
