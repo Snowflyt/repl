@@ -5,7 +5,7 @@ import importX from "eslint-plugin-import-x";
 import jsdoc from "eslint-plugin-jsdoc";
 import prettierRecommended from "eslint-plugin-prettier/recommended";
 import react from "eslint-plugin-react";
-import reactHooks from "eslint-plugin-react-hooks";
+import * as reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import sonarjs from "eslint-plugin-sonarjs";
 import sortDestructureKeys from "eslint-plugin-sort-destructure-keys";
@@ -19,6 +19,7 @@ export default tseslint.config(
   jsdoc.configs["flat/recommended-typescript-error"],
   react.configs.flat.recommended,
   react.configs.flat["jsx-runtime"],
+  reactHooks.configs["recommended-latest"],
   reactRefresh.configs.vite,
   importX.flatConfigs.recommended,
   importX.flatConfigs.typescript,
@@ -28,7 +29,6 @@ export default tseslint.config(
     plugins: {
       jsdoc,
       react,
-      "react-hooks": /** @type {any} */ (reactHooks),
       "sort-destructure-keys": sortDestructureKeys,
     },
     linterOptions: {
@@ -46,7 +46,6 @@ export default tseslint.config(
       globals: { ...globals.browser },
     },
     rules: {
-      .../** @type {any} */ (reactHooks.configs.recommended.rules),
       "@typescript-eslint/restrict-plus-operands": [
         "error",
         { allowAny: true, allowNumberAndString: true },
