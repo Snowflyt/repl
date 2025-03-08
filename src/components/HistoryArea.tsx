@@ -18,7 +18,7 @@ interface HistoryAreaProps {
 }
 
 const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHistory }) => {
-  const [history, inputHistory] = useHistoryStore((state) => [state.history, state.inputHistory]);
+  const { history, inputHistory } = useHistoryStore();
 
   const historyAreaRef = useRef<HTMLDivElement>(null);
 

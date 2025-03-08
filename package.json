@@ -17,15 +17,13 @@
     "color2k": "^2.0.3",
     "effect": "^3.13.2",
     "highlight.js": "^11.11.1",
-    "immer": "^10.1.1",
-    "proxy-compare": "^3.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "showify": "^0.1.2",
+    "troza": "^0.2.0",
     "ts-blank-space": "^0.6.0",
     "ts-pattern": "^5.6.2",
-    "typescript": "^5.7.3",
-    "use-immer": "^0.11.0"
+    "typescript": "^5.7.3"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.7.1",

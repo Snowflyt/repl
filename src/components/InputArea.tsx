@@ -67,7 +67,7 @@ const InputArea: React.FC<InputAreaProps> = ({
   }, []);
 
   /* History */
-  const inputHistory = useHistoryStore((state) => state.inputHistory);
+  const { inputHistory } = useHistoryStore();
   const prevInputHistoryIndexRef = useRef(inputHistoryIndex);
 
   useEffect(() => {
@@ -93,7 +93,7 @@ const InputArea: React.FC<InputAreaProps> = ({
   }, [inputHistory, inputHistoryIndex, updateRows, refocus, input]);
 
   /* Sandbox */
-  const [isLoading, isExecuting] = useSandboxStore((state) => [state.isLoading, state.isExecuting]);
+  const { isExecuting, isLoading } = useSandboxStore();
   const [showExecuting, setShowExecuting] = useState(false);
 
   const executeCode = useCallback(

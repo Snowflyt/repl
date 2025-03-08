@@ -9,7 +9,7 @@ import sandboxStore, { useSandboxStore } from "./stores/sandbox";
 const App: React.FC = () => {
   const [inputHistoryIndex, setInputHistoryIndex] = useState(-1);
 
-  const isLoading = useSandboxStore((state) => state.isLoading);
+  const { isLoading } = useSandboxStore();
   const [showLoading, setShowLoading] = useState(false);
 
   useEffect(() => {

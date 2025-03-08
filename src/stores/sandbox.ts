@@ -1,8 +1,9 @@
 import { Option } from "effect";
+import { create } from "troza";
+import { hookify } from "troza/react";
 
 import type { Sandbox } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
-import { createStore, hookify } from "../utils/store";
 
 import historyStore from "./history";
 
@@ -145,79 +146,77 @@ const mockConsole = () => {
   };
 };
 
-const sandboxStore = createStore({
+const sandboxStore = create({
   isLoading: false,
   isExecuting: false,
 
-  actions: {
-    async load(): Promise<void> {
-      if (sandbox || this.isLoading) return;
-      this.isLoading = true;
+  async load(): Promise<void> {
+    if (sandbox || this.isLoading) return;
+    this.isLoading = true;
 
-      // Use `requestIdleCallback` if available to avoid blocking UI
-      if ("requestIdleCallback" in window)
-        return await new Promise((resolve, reject) => {
-          window.requestIdleCallback(() => {
-            import("../utils/sandbox")
-              .then(({ Sandbox }) => {
-                sandbox = new Sandbox();
-                void sandbox.checkCdnAccessibility();
-                mockConsole();
-                this.isLoading = false;
-              })
-              .then(resolve, reject);
-          });
+    // Use `requestIdleCallback` if available to avoid blocking UI
+    if ("requestIdleCallback" in window)
+      return await new Promise((resolve, reject) => {
+        window.requestIdleCallback(() => {
+          import("../utils/sandbox")
+            .then(({ Sandbox }) => {
+              sandbox = new Sandbox();
+              void sandbox.checkCdnAccessibility();
+              mockConsole();
+              this.isLoading = false;
+            })
+            .then(resolve, reject);
         });
+      });
 
-      const { Sandbox } = await import("../utils/sandbox");
-      sandbox = new Sandbox();
-      void sandbox.checkCdnAccessibility();
-      mockConsole();
-      this.isLoading = false;
-    },
+    const { Sandbox } = await import("../utils/sandbox");
+    sandbox = new Sandbox();
+    void sandbox.checkCdnAccessibility();
+    mockConsole();
+    this.isLoading = false;
+  },
 
-    async execute(code: string): Promise<void> {
-      if (!code.trim() || !sandbox || this.isExecuting) return;
+  async execute(code: string): Promise<void> {
+    if (!code.trim() || !sandbox || this.isExecuting) return;
 
-      this.isExecuting = true;
-      executionAbortController = new AbortController();
+    this.isExecuting = true;
+    executionAbortController = new AbortController();
 
-      appendInput(code);
+    appendInput(code);
 
-      try {
-        const result = await Promise.race<Option.Option<unknown>>([
-          sandbox.execute(code),
-          new Promise((_, reject) => {
-            executionAbortController?.signal.addEventListener("abort", () => {
-              reject(new Error("REPL: Execution cancelled"));
-            });
-          }),
-        ]);
+    try {
+      const result = await Promise.race<Option.Option<unknown>>([
+        sandbox.execute(code),
+        new Promise((_, reject) => {
+          executionAbortController?.signal.addEventListener("abort", () => {
+            reject(new Error("REPL: Execution cancelled"));
+          });
+        }),
+      ]);
 
-        show(result); // Traverse the result to register promises
-        // Wait for the next microtask to ensure eager promises are resolved
-        await new Promise((resolve) => void Promise.resolve().then(resolve));
+      show(result); // Traverse the result to register promises
+      // Wait for the next microtask to ensure eager promises are resolved
+      await new Promise((resolve) => void Promise.resolve().then(resolve));
 
-        if (Option.isSome(result)) appendOutput(show(result.value));
-      } catch (error) {
-        if (error instanceof Error && error.message === "REPL: Execution cancelled") {
-          // Ignore the error if the execution was cancelled
-          return;
-        }
-        appendError(error);
-      } finally {
-        this.isExecuting = false;
-        executionAbortController = null;
+      if (Option.isSome(result)) appendOutput(show(result.value));
+    } catch (error) {
+      if (error instanceof Error && error.message === "REPL: Execution cancelled") {
+        // Ignore the error if the execution was cancelled
+        return;
       }
-    },
+      appendError(error);
+    } finally {
+      this.isExecuting = false;
+      executionAbortController = null;
+    }
+  },
 
-    abort() {
-      executionAbortController?.abort();
-      if (this.isExecuting) {
-        this.isExecuting = false;
-        appendOutput("info", "Execution cancelled");
-      }
-    },
+  abort() {
+    executionAbortController?.abort();
+    if (this.isExecuting) {
+      this.isExecuting = false;
+      appendOutput("info", "Execution cancelled");
+    }
   },
 });
 
