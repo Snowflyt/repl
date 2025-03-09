@@ -2,10 +2,12 @@ import { Icon } from "@iconify/react";
 import { AnsiUp } from "ansi_up";
 import { clsx } from "clsx";
 import { transparentize } from "color2k";
+import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { match } from "ts-pattern";
 
-import { useHistoryStore } from "../stores/history";
+import historyStore, { useHistoryStore } from "../stores/history";
+import type { HistoryEntry } from "../types";
 import { highlightCode } from "../utils/highlight";
 
 import type { InputAreaRef } from "./InputArea";
@@ -18,7 +20,7 @@ interface HistoryAreaProps {
 }
 
 const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHistory }) => {
-  const { history, inputHistory } = useHistoryStore();
+  const history = useHistoryStore((state) => state.history);
 
   const historyAreaRef = useRef<HTMLDivElement>(null);
 
@@ -35,22 +37,11 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
       className="flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
       {history.map((entry, index) => (
         <div key={index} className="group mb-2">
-          {match(entry)
-            .with({ type: "input" }, ({ value }) => (
-              <InputMessage
-                value={value}
-                inputAreaRef={inputAreaRef}
-                onJump={(() => {
-                  const index = inputHistory.findIndex((e) => e === entry);
-                  return () => onJumpToInputHistory?.(index);
-                })()}
-              />
-            ))
-            .with({ type: "output" }, ({ backgroundColor, icon, value }) => (
-              <OutputMessage value={value} icon={icon} backgroundColor={backgroundColor} />
-            ))
-            .with({ type: "error" }, ({ value }) => <ErrorMessage value={value} />)
-            .exhaustive()}
+          <HistoryItem
+            entry={entry}
+            inputAreaRef={inputAreaRef}
+            onJumpToInputHistory={onJumpToInputHistory}
+          />
         </div>
       ))}
     </div>
@@ -59,11 +50,38 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
 
 export default HistoryArea;
 
-const ButtonGroup: React.FC<{
+const HistoryItem = React.memo<{
+  entry: HistoryEntry;
+  inputAreaRef?: React.RefObject<InputAreaRef | null>;
+  onJumpToInputHistory?: (index: number) => void;
+}>(function HistoryItem({ entry, inputAreaRef, onJumpToInputHistory }) {
+  return (
+    <div className="group mb-2">
+      {match(entry)
+        .with({ type: "input" }, ({ value }) => (
+          <InputMessage
+            value={value}
+            inputAreaRef={inputAreaRef}
+            onJump={(() => {
+              const index = historyStore.$get().inputHistory.findIndex((e) => e === entry);
+              return () => onJumpToInputHistory?.(index);
+            })()}
+          />
+        ))
+        .with({ type: "output" }, ({ backgroundColor, icon, value }) => (
+          <OutputMessage value={value} icon={icon} backgroundColor={backgroundColor} />
+        ))
+        .with({ type: "error" }, ({ value }) => <ErrorMessage value={value} />)
+        .exhaustive()}
+    </div>
+  );
+});
+
+const ButtonGroup = React.memo<{
   input: string;
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
   onJump?: () => void;
-}> = ({ input, inputAreaRef, onJump }) => {
+}>(function ButtonGroup({ input, inputAreaRef, onJump }) {
   const [copied, setCopied] = useState(false);
 
   return (
@@ -105,48 +123,52 @@ const ButtonGroup: React.FC<{
       </button>
     </div>
   );
-};
+});
 
-const InputMessage: React.FC<{
+const InputMessage = React.memo<{
   value: string;
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
   onJump?: () => void;
-}> = ({ inputAreaRef, onJump, value }) => (
-  <div className="flex flex-row">
-    <div className="flex flex-col">
-      {value.split("\n").map((_, i) => (
-        <span key={i} className="inline-block w-7 text-[#ff6e6e] select-none">
-          {i === 0 ? ">>" : ".."}
-        </span>
-      ))}
-    </div>
+}>(function InputMessage({ inputAreaRef, onJump, value }) {
+  return (
+    <div className="flex flex-row">
+      <div className="flex flex-col">
+        {value.split("\n").map((_, i) => (
+          <span key={i} className="inline-block w-7 text-[#ff6e6e] select-none">
+            {i === 0 ? ">>" : ".."}
+          </span>
+        ))}
+      </div>
 
-    <div className="relative flex-1">
-      <pre className="w-full bg-transparent break-all whitespace-pre-wrap">
-        <code dangerouslySetInnerHTML={{ __html: highlightCode(value) }} />
-      </pre>
-      <ButtonGroup input={value} inputAreaRef={inputAreaRef} onJump={onJump} />
+      <div className="relative flex-1">
+        <pre className="w-full bg-transparent break-all whitespace-pre-wrap">
+          <code dangerouslySetInnerHTML={{ __html: highlightCode(value) }} />
+        </pre>
+        <ButtonGroup input={value} inputAreaRef={inputAreaRef} onJump={onJump} />
+      </div>
     </div>
-  </div>
-);
+  );
+});
 
-const ANSIText: React.FC<{
+const ANSIText = React.memo<{
   value: string;
   className?: string;
   style?: React.CSSProperties;
-}> = ({ className, style, value }) => (
-  <pre
-    className={className}
-    style={style}
-    dangerouslySetInnerHTML={{ __html: ansi_up.ansi_to_html(value) }}
-  />
-);
+}>(function ANSIText({ className, style, value }) {
+  return (
+    <pre
+      className={className}
+      style={style}
+      dangerouslySetInnerHTML={{ __html: ansi_up.ansi_to_html(value) }}
+    />
+  );
+});
 
-const OutputMessage: React.FC<{
+const OutputMessage = React.memo<{
   value: string;
   icon?: React.ReactNode;
   backgroundColor?: string;
-}> = ({ backgroundColor, icon, value }) => {
+}>(function OutputMessage({ backgroundColor, icon, value }) {
   if (icon) {
     return (
       <div className="flex">
@@ -166,11 +188,13 @@ const OutputMessage: React.FC<{
       style={backgroundColor ? { backgroundColor: transparentize(backgroundColor, 0.8) } : {}}
     />
   );
-};
+});
 
-const ErrorMessage: React.FC<{ value: string }> = ({ value }) => (
-  <ANSIText
-    value={value}
-    className="mt-1 rounded-lg bg-[#dc3545]/50 px-4 py-2 break-all whitespace-pre-wrap"
-  />
-);
+const ErrorMessage = React.memo<{ value: string }>(function ErrorMessage({ value }) {
+  return (
+    <ANSIText
+      value={value}
+      className="mt-1 rounded-lg bg-[#dc3545]/50 px-4 py-2 break-all whitespace-pre-wrap"
+    />
+  );
+});
