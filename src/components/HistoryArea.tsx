@@ -6,6 +6,7 @@ import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { match } from "ts-pattern";
 
+import { useIsTouchDevice } from "../hooks";
 import historyStore, { useHistoryStore } from "../stores/history";
 import type { HistoryEntry } from "../types";
 import { highlightCode } from "../utils/highlight";
@@ -34,7 +35,7 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
   return (
     <div
       ref={historyAreaRef}
-      className="flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
+      className="relative flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
       {history.map((entry, index) => (
         <div key={index} className="group mb-2">
           <HistoryItem
@@ -77,50 +78,174 @@ const HistoryItem = React.memo<{
   );
 });
 
+// Maintain a global reference for tracking open menus
+let openMenuId: string | null = null;
+
 const ButtonGroup = React.memo<{
   input: string;
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
   onJump?: () => void;
 }>(function ButtonGroup({ input, inputAreaRef, onJump }) {
   const [copied, setCopied] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const isTouchDevice = useIsTouchDevice();
+
+  // Generate unique ID for this instance
+  // eslint-disable-next-line sonarjs/pseudo-random
+  const menuId = useRef(`menu-${Math.random().toString(36).substring(2, 9)}`);
+
+  // Close dropdown when clicking outside or opening another menu
+  useEffect(() => {
+    if (showMenu) {
+      // Register this as the active menu
+      openMenuId = menuId.current;
+
+      const handleClick = (e: MouseEvent) => {
+        // Ensure target is an Element before using closest
+        if (!(e.target instanceof Element)) {
+          setShowMenu(false);
+          return;
+        }
+
+        // Check if the click is on this menu button
+        const target = e.target;
+        const isMenuButton = target.closest(`[data-menu-id="${menuId.current}"]`);
+
+        // Close if clicked outside or if another menu was opened
+        if (!isMenuButton || openMenuId !== menuId.current) {
+          setShowMenu(false);
+        }
+      };
+
+      document.addEventListener("click", handleClick);
+      return () => document.removeEventListener("click", handleClick);
+    }
+  }, [showMenu]);
 
   return (
-    <div className="absolute top-0 right-2 flex space-x-1.5 p-0.5">
-      {/* Copy to clipboard */}
-      <button
-        type="button"
-        title="Copy to clipboard"
-        onClick={() => {
-          void navigator.clipboard.writeText(input);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 500);
-        }}
-        className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
-        <Icon
-          icon={copied ? "material-symbols:check" : "material-symbols:content-copy-outline"}
-          className="size-4"
-        />
-      </button>
+    <div className="absolute top-0 right-0 flex items-center p-0.5">
+      {/* Indicator for hidden actions (only when not hovering) */}
+      {!isTouchDevice && (
+        <div className="mr-1.5 group-hover:hidden">
+          <div
+            className="rounded-md border border-gray-700/50 bg-black/50 p-1 text-gray-500"
+            title="Hover for more options">
+            <Icon icon="material-symbols:more-horiz" className="size-4" />
+          </div>
+        </div>
+      )}
 
-      {/* Rerun */}
-      <button
-        type="button"
-        title="Rerun"
-        onClick={() => {
-          void inputAreaRef?.current?.rerun(input);
-        }}
-        className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
-        <Icon icon="material-symbols:replay" className="size-4" />
-      </button>
+      {/* Show secondary buttons on hover for non-touch devices */}
+      {!isTouchDevice && (
+        <div className="mr-1.5 hidden space-x-1.5 group-hover:flex">
+          <button
+            type="button"
+            title="Copy to clipboard"
+            onClick={(e) => {
+              e.stopPropagation();
+              void navigator.clipboard.writeText(input);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 500);
+            }}
+            className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
+            <Icon
+              icon={copied ? "material-symbols:check" : "material-symbols:content-copy-outline"}
+              className="size-4"
+            />
+          </button>
 
-      {/* Load into input */}
-      <button
-        type="button"
-        title="Load into input"
-        onClick={onJump}
-        className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
-        <Icon icon="material-symbols:keyboard-return" className="size-4" />
-      </button>
+          <button
+            type="button"
+            title="Rerun"
+            onClick={(e) => {
+              e.stopPropagation();
+              void inputAreaRef?.current?.rerun(input);
+            }}
+            className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
+            <Icon icon="material-symbols:replay" className="size-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Touch-device menu button */}
+      {isTouchDevice && (
+        <div className="mr-1.5">
+          <button
+            type="button"
+            title="Actions"
+            data-menu-id={menuId.current}
+            onClick={(e) => {
+              e.stopPropagation();
+              // Close other menus when opening this one
+              if (!showMenu && openMenuId && openMenuId !== menuId.current) {
+                // Trigger a document click to close other menus
+                document.dispatchEvent(new MouseEvent("click"));
+              }
+              setShowMenu(!showMenu);
+            }}
+            className="rounded-md border border-gray-700/50 bg-black/70 p-1.5 text-gray-400 hover:bg-white/10 hover:text-gray-200">
+            <Icon icon="material-symbols:more-vert" className="size-4" />
+          </button>
+
+          {/* Touch-device dropdown menu */}
+          {showMenu && (
+            <div className="absolute top-8 right-0 z-10 min-w-32 rounded-md border border-gray-700/50 bg-black/90 py-0.5 shadow-lg">
+              <button
+                type="button"
+                className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void navigator.clipboard.writeText(input);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 500);
+                  setShowMenu(false);
+                }}>
+                <Icon
+                  icon={copied ? "material-symbols:check" : "material-symbols:content-copy-outline"}
+                  className="mr-2 size-3.5"
+                />
+                Copy
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void inputAreaRef?.current?.rerun(input);
+                  setShowMenu(false);
+                }}>
+                <Icon icon="material-symbols:replay" className="mr-2 size-3.5" />
+                Rerun
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onJump?.();
+                  setShowMenu(false);
+                }}>
+                <Icon icon="material-symbols:keyboard-return" className="mr-2 size-3.5" />
+                Load
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Primary action always visible on non-touch devices */}
+      {!isTouchDevice && (
+        <button
+          type="button"
+          title="Load into input"
+          onClick={(e) => {
+            e.stopPropagation();
+            onJump?.();
+          }}
+          className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
+          <Icon icon="material-symbols:keyboard-return" className="size-4" />
+        </button>
+      )}
     </div>
   );
 });
