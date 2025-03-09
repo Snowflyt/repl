@@ -8,6 +8,7 @@
     "dev": "vite",
     "lint": "eslint **/*.{js,ts} *.{cjs,mjs,cts,mts} --no-error-on-unmatched-pattern --report-unused-disable-directives-severity error --max-warnings 0",
     "lint:fix": "eslint --fix **/*.{js,ts} *.{cjs,mjs,cts,mts} --no-error-on-unmatched-pattern --report-unused-disable-directives-severity error --max-warnings 0",
+    "prepare": "node -e \"import fs from 'fs'; import path from 'path'; const hooksDir = path.join(process.cwd(), '.githooks'); const gitHooksDir = path.join(process.cwd(), '.git/hooks'); if (!fs.existsSync(gitHooksDir)) { console.error('Git hooks directory not found, please run this in a git repository.'); process.exit(1); } fs.readdirSync(hooksDir).forEach(file => { const srcFile = path.join(hooksDir, file); const destFile = path.join(gitHooksDir, file); fs.copyFileSync(srcFile, destFile); if (process.platform !== 'win32' && !file.endsWith('.cmd')) { fs.chmodSync(destFile, 0o755); } })\"",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
