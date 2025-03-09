@@ -6,11 +6,12 @@ import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { match } from "ts-pattern";
 
-import { useIsTouchDevice } from "../hooks";
+import { useHasScrollbar, useIsTouchDevice, useScrollbarWidth } from "../hooks";
 import historyStore, { useHistoryStore } from "../stores/history";
 import type { HistoryEntry } from "../types";
 import { highlightCode } from "../utils/highlight";
 
+import GitHubIcon from "./GitHubIcon";
 import type { InputAreaRef } from "./InputArea";
 
 const ansi_up = new AnsiUp();
@@ -22,8 +23,10 @@ interface HistoryAreaProps {
 
 const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHistory }) => {
   const history = useHistoryStore((state) => state.history);
-
   const historyAreaRef = useRef<HTMLDivElement>(null);
+
+  const hasScrollbar = useHasScrollbar(historyAreaRef, [history]);
+  const scrollbarWidth = useScrollbarWidth();
 
   // Scroll to the bottom of the history area when the history changes
   useEffect(() => {
@@ -36,11 +39,17 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
     <div
       ref={historyAreaRef}
       className="relative flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
+      <GitHubIcon
+        className="fixed top-5 z-1"
+        style={{ right: hasScrollbar ? `calc(1rem + ${scrollbarWidth}px)` : "1rem" }}
+      />
+
       {history.map((entry, index) => (
         <div key={index} className="group mb-2">
           <HistoryItem
             entry={entry}
             inputAreaRef={inputAreaRef}
+            historyAreaRef={historyAreaRef}
             onJumpToInputHistory={onJumpToInputHistory}
           />
         </div>
@@ -54,8 +63,9 @@ export default HistoryArea;
 const HistoryItem = React.memo<{
   entry: HistoryEntry;
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
+  historyAreaRef?: React.RefObject<HTMLDivElement | null>;
   onJumpToInputHistory?: (index: number) => void;
-}>(function HistoryItem({ entry, inputAreaRef, onJumpToInputHistory }) {
+}>(function HistoryItem({ entry, historyAreaRef, inputAreaRef, onJumpToInputHistory }) {
   return (
     <div className="group mb-2">
       {match(entry)
@@ -63,6 +73,7 @@ const HistoryItem = React.memo<{
           <InputMessage
             value={value}
             inputAreaRef={inputAreaRef}
+            historyAreaRef={historyAreaRef}
             onJump={(() => {
               const index = historyStore.$get().inputHistory.findIndex((e) => e === entry);
               return () => onJumpToInputHistory?.(index);
@@ -253,10 +264,46 @@ const ButtonGroup = React.memo<{
 const InputMessage = React.memo<{
   value: string;
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
+  historyAreaRef?: React.RefObject<HTMLDivElement | null>;
   onJump?: () => void;
-}>(function InputMessage({ inputAreaRef, onJump, value }) {
+}>(function InputMessage({ historyAreaRef, inputAreaRef, onJump, value }) {
+  const [isTooCloseToTop, setIsTooCloseToTop] = useState(false);
+  const messageRef = useRef<HTMLDivElement>(null);
+
+  // Check position relative to container
+  useEffect(() => {
+    const checkPosition = () => {
+      const element = messageRef.current;
+      const container = historyAreaRef?.current;
+      if (!element || !container) return;
+
+      // Calculate position relative to container
+      const elementRect = element.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const relativeTop = elementRect.top - containerRect.top;
+
+      // Consider "too close" if within 50px of top (where GitHub icon is)
+      setIsTooCloseToTop(relativeTop < 50);
+    };
+
+    // Check position initially
+    checkPosition();
+
+    // Add scroll listener to the history area directly
+    const historyArea = historyAreaRef?.current;
+    if (historyArea) {
+      historyArea.addEventListener("scroll", checkPosition);
+      window.addEventListener("resize", checkPosition);
+
+      return () => {
+        historyArea.removeEventListener("scroll", checkPosition);
+        window.removeEventListener("resize", checkPosition);
+      };
+    }
+  }, [historyAreaRef]);
+
   return (
-    <div className="flex flex-row">
+    <div className="flex flex-row" ref={messageRef}>
       <div className="flex flex-col">
         {value.split("\n").map((_, i) => (
           <span key={i} className="inline-block w-7 text-[#ff6e6e] select-none">
@@ -269,7 +316,12 @@ const InputMessage = React.memo<{
         <pre className="w-full bg-transparent break-all whitespace-pre-wrap">
           <code dangerouslySetInnerHTML={{ __html: highlightCode(value) }} />
         </pre>
-        <ButtonGroup input={value} inputAreaRef={inputAreaRef} onJump={onJump} />
+
+        {/* Only render ButtonGroup if not too close to top,
+            to avoid overlapping with the GitHub icon (which is always at the top right) */}
+        {!isTooCloseToTop && (
+          <ButtonGroup input={value} inputAreaRef={inputAreaRef} onJump={onJump} />
+        )}
       </div>
     </div>
   );
