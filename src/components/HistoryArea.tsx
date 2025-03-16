@@ -8,11 +8,13 @@ import { match } from "ts-pattern";
 
 import { useHasScrollbar, useIsTouchDevice, useScrollbarWidth } from "../hooks";
 import historyStore, { useHistoryStore } from "../stores/history";
+import { useSettingsStore } from "../stores/settings";
 import type { HistoryEntry } from "../types";
 import { highlightCode } from "../utils/highlight";
 
-import GitHubIcon from "./GitHubIcon";
+import HeaderControls from "./HeaderControls";
 import type { InputAreaRef } from "./InputArea";
+import SettingsPanel from "./SettingsPanel";
 
 const ansi_up = new AnsiUp();
 
@@ -35,14 +37,25 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
     element.scrollTop = element.scrollHeight;
   }, [history]);
 
+  const [showSettings, setShowSettings] = useState(false);
+  const settings = useSettingsStore();
+
   return (
     <div
       ref={historyAreaRef}
-      className="relative flex-1 overflow-auto p-4 font-mono text-sm text-gray-100 sm:text-base">
-      <GitHubIcon
+      className={clsx(
+        "relative flex-1 overflow-auto p-4 font-mono text-gray-100",
+        settings.appearance.fontSize === "sm" && "text-xs sm:text-sm",
+        settings.appearance.fontSize === "md" && "text-sm sm:text-base",
+        settings.appearance.fontSize === "lg" && "text-base sm:text-lg",
+      )}>
+      <HeaderControls
         className="fixed top-5 z-1"
         style={{ right: hasScrollbar ? `calc(1rem + ${scrollbarWidth}px)` : "1rem" }}
+        onOpenSettings={() => setShowSettings(true)}
       />
+
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
 
       {history.map((entry, index) => (
         <div key={index} className="group mb-2">
@@ -302,6 +315,8 @@ const InputMessage = React.memo<{
     }
   }, [historyAreaRef]);
 
+  const settings = useSettingsStore();
+
   return (
     <div className="flex flex-row" ref={messageRef}>
       <div className="flex flex-col">
@@ -314,7 +329,11 @@ const InputMessage = React.memo<{
 
       <div className="relative flex-1">
         <pre className="w-full bg-transparent break-all whitespace-pre-wrap">
-          <code dangerouslySetInnerHTML={{ __html: highlightCode(value) }} />
+          <code
+            dangerouslySetInnerHTML={{
+              __html: settings.editor.syntaxHighlighting ? highlightCode(value) : value,
+            }}
+          />
         </pre>
 
         {/* Only render ButtonGroup if not too close to top,

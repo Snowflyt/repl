@@ -1,8 +1,10 @@
 import { Icon } from "@iconify/react";
+import { clsx } from "clsx";
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { useHistoryStore } from "../stores/history";
 import sandboxStore, { useSandboxStore } from "../stores/sandbox";
+import { useSettingsStore } from "../stores/settings";
 import { highlightCode } from "../utils/highlight";
 
 export interface InputAreaProps {
@@ -113,6 +115,9 @@ const InputArea: React.FC<InputAreaProps> = ({
     [input, resetInput],
   );
 
+  /* Settings */
+  const settings = useSettingsStore();
+
   /* Expose methods */
   useImperativeHandle(
     ref,
@@ -140,7 +145,13 @@ const InputArea: React.FC<InputAreaProps> = ({
     <div className="max-h-[66vh] overflow-y-auto border-t border-[#3d2530] bg-[#1a1520]/50 p-4 backdrop-blur-sm">
       <div className="flex items-start rounded-lg bg-[#1a1520]/70 p-2">
         {/* Icon */}
-        <span className="flex h-7 items-center px-1 font-mono text-sm text-[#ff6e6e] select-none md:text-base 2xl:text-lg">
+        <span
+          className={clsx(
+            "flex items-center px-1 font-mono text-[#ff6e6e] select-none",
+            settings.appearance.fontSize === "sm" && "2xl:text-md h-6 text-xs md:text-sm",
+            settings.appearance.fontSize === "md" && "h-7 text-sm md:text-base 2xl:text-lg",
+            settings.appearance.fontSize === "lg" && "h-7 text-base md:text-lg 2xl:text-xl",
+          )}>
           {
             <Icon
               icon={showExecuting ? "svg-spinners:180-ring" : "material-symbols:arrow-forward-ios"}
@@ -153,7 +164,15 @@ const InputArea: React.FC<InputAreaProps> = ({
         <div className="relative ml-2 w-full">
           <pre
             ref={measureRef}
-            className="pointer-events-none invisible absolute -left-full w-full font-mono text-sm leading-6 break-all whitespace-pre-wrap sm:leading-7 md:text-base 2xl:text-lg"
+            className={clsx(
+              "pointer-events-none invisible absolute -left-full w-full font-mono break-all whitespace-pre-wrap",
+              settings.appearance.fontSize === "sm" &&
+                "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
+              settings.appearance.fontSize === "md" &&
+                "text-sm leading-6 sm:leading-7 md:text-base 2xl:text-lg",
+              settings.appearance.fontSize === "lg" &&
+                "text-base leading-6 sm:leading-7 md:text-lg 2xl:text-xl",
+            )}
           />
 
           <textarea
@@ -215,18 +234,37 @@ const InputArea: React.FC<InputAreaProps> = ({
               setInput(newValue);
               updateRows(newValue);
             }}
-            className="w-full resize-none appearance-none bg-transparent font-mono text-sm leading-6 break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none sm:leading-7 md:text-base 2xl:text-lg"
+            className={clsx(
+              "w-full resize-none appearance-none bg-transparent font-mono break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none",
+              settings.appearance.fontSize === "sm" &&
+                "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
+              settings.appearance.fontSize === "md" &&
+                "text-sm leading-6 sm:leading-7 md:text-base 2xl:text-lg",
+              settings.appearance.fontSize === "lg" &&
+                "text-base leading-6 sm:leading-7 md:text-lg 2xl:text-xl",
+            )}
             style={{ WebkitTextFillColor: "transparent" }}
             placeholder={getPlaceholder()}
             rows={rows}
             spellCheck={false}
           />
-          <pre className="pointer-events-none absolute top-0 left-0 w-full font-mono text-sm leading-6 break-all whitespace-pre-wrap text-gray-100 sm:leading-7 md:text-base 2xl:text-lg">
+          <pre
+            className={clsx(
+              "pointer-events-none absolute top-0 left-0 w-full font-mono break-all whitespace-pre-wrap text-gray-100",
+              settings.appearance.fontSize === "sm" &&
+                "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
+              settings.appearance.fontSize === "md" &&
+                "text-sm leading-6 sm:leading-7 md:text-base 2xl:text-lg",
+              settings.appearance.fontSize === "lg" &&
+                "text-base leading-6 sm:leading-7 md:text-lg 2xl:text-xl",
+            )}>
             <code
               dangerouslySetInnerHTML={{
                 __html:
                   input ?
-                    highlightCode(input)
+                    settings.editor.syntaxHighlighting ?
+                      highlightCode(input)
+                    : input
                   : `<span class="text-[#6c7086]">${getPlaceholder()}</span>`,
               }}
             />
