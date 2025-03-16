@@ -31,7 +31,7 @@ const mockConsole = () => {
   if (consoleMocked) return;
   consoleMocked = true;
 
-  const originalConsole = console;
+  const originalConsole = { ...console };
 
   console.clear = function clear() {
     clearHistory();
@@ -84,10 +84,18 @@ const mockConsole = () => {
   };
 
   console.debug = function debug(...args: unknown[]) {
+    if (import.meta.env.DEV && typeof args[0] === "string" && args[0].startsWith("[vite]")) {
+      originalConsole.debug(...args);
+      return;
+    }
     appendOutput(indent(showArgs(args)));
   };
 
   console.log = function log(...args: unknown[]) {
+    if (import.meta.env.DEV && typeof args[0] === "string" && args[0].startsWith("[vite]")) {
+      originalConsole.log(...args);
+      return;
+    }
     appendOutput(indent(showArgs(args)));
   };
 
