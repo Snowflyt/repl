@@ -18,12 +18,12 @@
     "color2k": "^2.0.3",
     "effect": "^3.14.8",
     "highlight.js": "^11.11.1",
+    "megamatch": "^0.1.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "showify": "^0.1.5",
     "troza": "^0.2.1",
     "ts-blank-space": "^0.6.1",
-    "ts-pattern": "^5.7.0",
     "typescript": "^5.8.3"
   },
   "devDependencies": {

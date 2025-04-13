@@ -2,9 +2,9 @@ import { Icon } from "@iconify/react";
 import { AnsiUp } from "ansi_up";
 import { clsx } from "clsx";
 import { transparentize } from "color2k";
+import { match } from "megamatch";
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
-import { match } from "ts-pattern";
 
 import { useHasScrollbar, useIsTouchDevice, useScrollbarWidth } from "../hooks";
 import historyStore, { useHistoryStore } from "../stores/history";
@@ -81,8 +81,8 @@ const HistoryItem = React.memo<{
 }>(function HistoryItem({ entry, historyAreaRef, inputAreaRef, onJumpToInputHistory }) {
   return (
     <div className="group mb-2">
-      {match(entry)
-        .with({ type: "input" }, ({ value }) => (
+      {match(entry, {
+        "{ type: 'input' }": ({ value }) => (
           <InputMessage
             value={value}
             inputAreaRef={inputAreaRef}
@@ -92,12 +92,12 @@ const HistoryItem = React.memo<{
               return () => onJumpToInputHistory?.(index);
             })()}
           />
-        ))
-        .with({ type: "output" }, ({ backgroundColor, icon, value }) => (
+        ),
+        "{ type: 'output' }": ({ backgroundColor, icon, value }) => (
           <OutputMessage value={value} icon={icon} backgroundColor={backgroundColor} />
-        ))
-        .with({ type: "error" }, ({ value }) => <ErrorMessage value={value} />)
-        .exhaustive()}
+        ),
+        "{ type: 'error' }": ({ value }) => <ErrorMessage value={value} />,
+      })}
     </div>
   );
 });

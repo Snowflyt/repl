@@ -1,7 +1,7 @@
 import { Icon } from "@iconify/react";
+import { match } from "megamatch";
 import { create, get } from "troza";
 import { hookify } from "troza/react";
-import { match } from "ts-pattern";
 
 import type { HistoryEntry } from "../types";
 import { show } from "../utils/show";
@@ -28,23 +28,22 @@ const historyStore = create({
     }
 
     const [type, value] = args;
-    const output = match(type)
-      .returnType<Omit<Extract<HistoryEntry, { type: "input" }>, "type">>()
-      .with("info", () => ({
+    const output = match<Omit<Extract<HistoryEntry, { type: "input" }>, "type">>()(type, {
+      "'info'": () => ({
         value,
         icon: <Icon icon="material-symbols:info-outline" className="text-blue-100" />,
-      }))
-      .with("warn", () => ({
+      }),
+      "'warn'": () => ({
         value,
         icon: <Icon icon="carbon:warning-alt-filled" className="text-[#ffc107]" />,
         backgroundColor: "#ffc107",
-      }))
-      .with("error", () => ({
+      }),
+      "'error'": () => ({
         value,
         icon: <Icon icon="gridicons:cross-circle" className="mt-0.5 text-[#dc3545]" />,
         backgroundColor: "#dc3545",
-      }))
-      .exhaustive();
+      }),
+    });
     this.history.push({ type: "output", ...output });
   },
 
