@@ -6,6 +6,7 @@ import { useHistoryStore } from "../stores/history";
 import sandboxStore, { useSandboxStore } from "../stores/sandbox";
 import { useSettingsStore } from "../stores/settings";
 import { highlightCode } from "../utils/highlight";
+import { isMacOS } from "../utils/platform";
 
 export interface InputAreaProps {
   ref?: React.Ref<InputAreaRef>;
@@ -131,14 +132,16 @@ const InputArea: React.FC<InputAreaProps> = ({
   /* Miscellaneous */
   const getPlaceholder = useCallback(() => {
     const isMobile = window.innerWidth < 640;
-    if (isExecuting) {
+    const modifierKey = isMacOS() ? "⌘" : "Ctrl";
+
+    if (isExecuting)
       return isMobile ? "Press Ctrl+C to cancel" : (
           "Waiting for execution to complete... Press Ctrl+C to ignore the result"
         );
-    }
+
     return isMobile ?
-        "Enter to run, Ctrl+Enter for newline"
-      : "Press Enter to execute, Ctrl+Enter for new line, ↑↓ to browse history";
+        `Enter to run, ${modifierKey}+Enter for newline`
+      : `Press Enter to execute, ${modifierKey}+Enter for new line, ↑↓ to browse history`;
   }, [isExecuting]);
 
   return (
@@ -189,7 +192,10 @@ const InputArea: React.FC<InputAreaProps> = ({
               }
 
               if (e.key === "Enter") {
-                if (e.ctrlKey) {
+                // Use `⌘` on Mac, `Ctrl` elsewhere
+                const isModifierKeyPressed = isMacOS() ? e.metaKey : e.ctrlKey;
+
+                if (isModifierKeyPressed) {
                   e.preventDefault();
                   const textarea = e.currentTarget;
                   const start = textarea.selectionStart;
