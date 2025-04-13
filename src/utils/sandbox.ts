@@ -137,7 +137,7 @@ export class Sandbox {
       // Check if the module specifier starts with a valid npm package name
       // See: https://stackoverflow.com/a/64880672/21418758
       (
-        /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](\/|@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
+        /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](\/|@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@latest|@alpha|@beta|@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
           modulePath,
         )
       ) ?
