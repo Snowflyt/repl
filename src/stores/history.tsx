@@ -28,23 +28,7 @@ const historyStore = create({
     }
 
     const [type, value] = args;
-    const output = match<Omit<Extract<HistoryEntry, { type: "input" }>, "type">>()(type, {
-      "'info'": () => ({
-        value,
-        icon: <Icon icon="material-symbols:info-outline" className="text-blue-100" />,
-      }),
-      "'warn'": () => ({
-        value,
-        icon: <Icon icon="carbon:warning-alt-filled" className="text-[#ffc107]" />,
-        backgroundColor: "#ffc107",
-      }),
-      "'error'": () => ({
-        value,
-        icon: <Icon icon="gridicons:cross-circle" className="mt-0.5 text-[#dc3545]" />,
-        backgroundColor: "#dc3545",
-      }),
-    });
-    this.history.push({ type: "output", ...output });
+    this.history.push({ type: "output", variant: type, value });
   },
 
   appendError(error: unknown) {

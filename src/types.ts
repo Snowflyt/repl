@@ -1,4 +1,4 @@
 export type HistoryEntry =
   | { type: "input"; value: string }
-  | { type: "output"; value: string; icon?: React.ReactNode; backgroundColor?: string }
+  | { type: "output"; variant?: "info" | "warn" | "error"; value: string }
   | { type: "error"; value: string };

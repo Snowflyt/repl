@@ -82,7 +82,7 @@ const HistoryItem = React.memo<{
   return (
     <div className="group mb-2">
       {match(entry, {
-        "{ type: 'input' }": ({ value }) => (
+        "{ type: 'input', value: _ }": (value) => (
           <InputMessage
             value={value}
             inputAreaRef={inputAreaRef}
@@ -93,10 +93,28 @@ const HistoryItem = React.memo<{
             })()}
           />
         ),
-        "{ type: 'output' }": ({ backgroundColor, icon, value }) => (
-          <OutputMessage value={value} icon={icon} backgroundColor={backgroundColor} />
+        "{ type: 'output', variant: 'info', value: _ }": (value) => (
+          <OutputMessage
+            value={value}
+            icon={<Icon icon="material-symbols:info-outline" className="text-blue-100" />}
+          />
         ),
-        "{ type: 'error' }": ({ value }) => <ErrorMessage value={value} />,
+        "{ type: 'output', variant: 'warn', value: _ }": (value) => (
+          <OutputMessage
+            value={value}
+            icon={<Icon icon="carbon:warning-alt-filled" className="text-[#ffc107]" />}
+            backgroundColor="#ffc107"
+          />
+        ),
+        "{ type: 'output', variant: 'error', value: _ }": (value) => (
+          <OutputMessage
+            value={value}
+            icon={<Icon icon="gridicons:cross-circle" className="mt-0.5 text-[#dc3545]" />}
+            backgroundColor="#dc3545"
+          />
+        ),
+        "{ type: 'output', value: _ }": (value) => <OutputMessage value={value} />,
+        "{ type: 'error', value: _ }": (value) => <ErrorMessage value={value} />,
       })}
     </div>
   );
