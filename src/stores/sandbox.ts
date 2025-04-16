@@ -157,6 +157,7 @@ const mockConsole = () => {
 const sandboxStore = create({
   isLoading: false,
   isExecuting: false,
+  showExecuting: false,
 
   async load(): Promise<void> {
     if (sandbox || this.isLoading) return;
@@ -187,7 +188,11 @@ const sandboxStore = create({
   async execute(code: string): Promise<void> {
     if (!code.trim() || !sandbox || this.isExecuting) return;
 
+    let executingTimer: ReturnType<typeof setTimeout> | null = null;
     this.isExecuting = true;
+    executingTimer = setTimeout(() => {
+      this.showExecuting = true;
+    }, 10);
     executionAbortController = new AbortController();
 
     appendInput(code);
@@ -215,6 +220,10 @@ const sandboxStore = create({
       appendError(error);
     } finally {
       this.isExecuting = false;
+      if (executingTimer) {
+        clearTimeout(executingTimer);
+        this.showExecuting = false;
+      }
       executionAbortController = null;
     }
   },

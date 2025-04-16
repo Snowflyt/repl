@@ -96,20 +96,17 @@ const InputArea: React.FC<InputAreaProps> = ({
   }, [inputHistory, inputHistoryIndex, updateRows, refocus, input]);
 
   /* Sandbox */
-  const { isExecuting, isLoading } = useSandboxStore();
-  const [showExecuting, setShowExecuting] = useState(false);
+  const { isExecuting, isLoading, showExecuting } = useSandboxStore();
 
   const executeCode = useCallback(
     async (customInput?: string) => {
       let inputReset = false;
       const executingTimer = setTimeout(() => {
-        setShowExecuting(true);
         inputReset = true;
         if (!customInput) resetInput();
       }, 10);
       await sandboxStore.execute(customInput || input);
       clearTimeout(executingTimer);
-      setShowExecuting(false);
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (!customInput && !inputReset) resetInput();
     },
