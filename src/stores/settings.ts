@@ -8,6 +8,9 @@ const settingsStore = create({
   editor: {
     syntaxHighlighting: true,
   },
+  history: {
+    persistInURL: true,
+  },
 });
 
 export default settingsStore;

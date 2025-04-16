@@ -1,9 +1,10 @@
 import { Icon } from "@iconify/react";
 import { clsx } from "clsx";
 import * as React from "react";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { useInOutAnimation } from "../hooks";
+import historyStore, { persistHistoryInURL } from "../stores/history";
 import settingsStore, { useSettingsStore } from "../stores/settings";
 
 import Switch from "./Switch";
@@ -74,6 +75,7 @@ const SettingsPanel = React.memo<SettingsPanelProps>(function SettingsPanel({ on
         <div className="space-y-6">
           <AppearanceSection />
           <EditorSection />
+          <HistorySection />
         </div>
       </div>
     </>
@@ -149,6 +151,89 @@ const EditorSection = React.memo(function EditorSection() {
           onChange={() => (settingsStore.editor.syntaxHighlighting = !editor.syntaxHighlighting)}
         />
       </SettingRow>
+    </Section>
+  );
+});
+
+const HistorySection = React.memo(function DataSection() {
+  const { history } = useSettingsStore();
+
+  const exportHistory = useCallback(() => {
+    const blob = new Blob([JSON.stringify(historyStore.history, null, 2) + "\n"], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "history.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const importHistory = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result as string);
+          historyStore.history = data;
+        } catch (error) {
+          console.error("Failed to import history:", error);
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    historyStore.history = [];
+  }, []);
+
+  return (
+    <Section title="History">
+      <SettingRow label="Persist history in URL" htmlFor="persist-history-in-url">
+        <Switch
+          id="persist-history-in-url"
+          value={history.persistInURL}
+          onChange={() => {
+            settingsStore.history.persistInURL = !history.persistInURL;
+            if (settingsStore.history.persistInURL) {
+              window.history.replaceState(null, "", persistHistoryInURL(historyStore.history));
+            } else {
+              const searchParams = new URLSearchParams(window.location.search);
+              searchParams.delete("history");
+              window.history.replaceState(
+                null,
+                "",
+                window.location.pathname + (searchParams.size ? "?" + searchParams.toString() : ""),
+              );
+            }
+          }}
+        />
+      </SettingRow>
+
+      <button
+        className="w-full rounded bg-gray-700 px-4 py-2 text-white transition-colors hover:bg-gray-600"
+        onClick={exportHistory}>
+        Export History
+      </button>
+      <button
+        className="w-full rounded bg-gray-700 px-4 py-2 text-white transition-colors hover:bg-gray-600"
+        onClick={importHistory}>
+        Import History
+      </button>
+      <button
+        className="w-full rounded bg-red-800 px-4 py-2 text-white transition-colors hover:bg-red-700"
+        onClick={clearHistory}>
+        Clear History
+      </button>
     </Section>
   );
 });

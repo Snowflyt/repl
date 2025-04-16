@@ -4,10 +4,11 @@ import { clsx } from "clsx";
 import { transparentize } from "color2k";
 import { match } from "megamatch";
 import * as React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useHasScrollbar, useIsTouchDevice, useScrollbarWidth } from "../hooks";
 import historyStore, { useHistoryStore } from "../stores/history";
+import sandboxStore from "../stores/sandbox";
 import { useSettingsStore } from "../stores/settings";
 import type { HistoryEntry } from "../types";
 import { highlightCode } from "../utils/highlight";
@@ -57,16 +58,17 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
 
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
 
-      {history.map((entry, index) => (
-        <div key={index} className="group mb-2">
-          <HistoryItem
+      {history.map((entry, index) =>
+        entry.type === "recovered-mark" ?
+          <RecoveredMark key={index} />
+        : <HistoryItem
+            key={index}
             entry={entry}
             inputAreaRef={inputAreaRef}
             historyAreaRef={historyAreaRef}
             onJumpToInputHistory={onJumpToInputHistory}
-          />
-        </div>
-      ))}
+          />,
+      )}
     </div>
   );
 };
@@ -116,6 +118,43 @@ const HistoryItem = React.memo<{
         "{ type: 'output', value: _ }": (value) => <OutputMessage value={value} />,
         "{ type: 'error', value: _ }": (value) => <ErrorMessage value={value} />,
       })}
+    </div>
+  );
+});
+
+const RecoveredMark = React.memo(function RecoveredMark() {
+  const handleRerunAll = useCallback(() => {
+    const recoveredMarkIndex = historyStore
+      .$get()
+      .history.findIndex(({ type }) => type === "recovered-mark");
+    if (recoveredMarkIndex === -1) return;
+    const history = historyStore.$get().history.slice(0, recoveredMarkIndex) as HistoryEntry[];
+    if (!history.length) return;
+
+    const newHistory = historyStore.$get().history.slice();
+    newHistory.splice(0, recoveredMarkIndex + 1);
+    historyStore.history = newHistory;
+
+    void sandboxStore.recover(history);
+  }, []);
+
+  return (
+    <div className="my-4 flex items-center">
+      <div className="flex-grow border-t border-gray-700/50"></div>
+      <div className="mx-4 flex items-center rounded-md border border-gray-700/50 bg-[#1e1625]/80 px-3 py-1.5 text-xs text-gray-400">
+        <Icon icon="codicon:history" className="mr-2 size-4" />
+        History recovered
+        <button
+          type="button"
+          onClick={handleRerunAll}
+          className="ml-3 rounded border border-gray-700/70 bg-[#2a1e30]/60 px-2 py-0.5 text-xs text-gray-300 transition-colors hover:bg-[#2a1e30] hover:text-white">
+          <span className="flex items-center">
+            <Icon icon="material-symbols:replay" className="mr-1 size-3.5" />
+            Re-run all
+          </span>
+        </button>
+      </div>
+      <div className="flex-grow border-t border-gray-700/50"></div>
     </div>
   );
 });

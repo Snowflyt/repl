@@ -2,12 +2,11 @@ import { Option } from "effect";
 import { create } from "troza";
 import { hookify } from "troza/react";
 
+import type { HistoryEntry } from "../types";
 import type { Sandbox } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
 
 import historyStore from "./history";
-
-const { appendError, appendInput, appendOutput, clear: clearHistory } = historyStore;
 
 let sandbox: Sandbox | null = null;
 let executionAbortController: AbortController | null = null;
@@ -28,6 +27,8 @@ const showArgs = (args: unknown[]) =>
 
 let consoleMocked = false;
 const mockConsole = () => {
+  const { appendError, appendOutput, clear: clearHistory } = historyStore;
+
   if (consoleMocked) return;
   consoleMocked = true;
 
@@ -185,17 +186,19 @@ const sandboxStore = create({
     this.isLoading = false;
   },
 
-  async execute(code: string): Promise<void> {
-    if (!code.trim() || !sandbox || this.isExecuting) return;
+  async execute(code: string, changeExecuting = true): Promise<void> {
+    if (!code.trim() || !sandbox || (changeExecuting && this.isExecuting)) return;
 
     let executingTimer: ReturnType<typeof setTimeout> | null = null;
-    this.isExecuting = true;
-    executingTimer = setTimeout(() => {
-      this.showExecuting = true;
-    }, 10);
+    if (changeExecuting) {
+      this.isExecuting = true;
+      executingTimer = setTimeout(() => {
+        this.showExecuting = true;
+      }, 10);
+    }
     executionAbortController = new AbortController();
 
-    appendInput(code);
+    historyStore.appendInput(code);
 
     try {
       const result = await Promise.race<Option.Option<unknown>>([
@@ -211,15 +214,15 @@ const sandboxStore = create({
       // Wait for the next microtask to ensure eager promises are resolved
       await new Promise((resolve) => void Promise.resolve().then(resolve));
 
-      if (Option.isSome(result)) appendOutput(show(result.value));
+      if (Option.isSome(result)) historyStore.appendOutput(show(result.value));
     } catch (error) {
       if (error instanceof Error && error.message === "REPL: Execution cancelled") {
         // Ignore the error if the execution was cancelled
         return;
       }
-      appendError(error);
+      historyStore.appendError(error);
     } finally {
-      this.isExecuting = false;
+      if (changeExecuting) this.isExecuting = false;
       if (executingTimer) {
         clearTimeout(executingTimer);
         this.showExecuting = false;
@@ -228,11 +231,50 @@ const sandboxStore = create({
     }
   },
 
+  async recover(history: HistoryEntry[]): Promise<void> {
+    this.isExecuting = true;
+    const executingTimer = setTimeout(() => {
+      this.showExecuting = true;
+    }, 10);
+
+    for (let i = 0; i < history.length; i++) {
+      const entry = history[i]!;
+      if (entry.type === "input") {
+        let shouldRecover = true;
+        const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
+        for (let j = i + 1; j < history.length; j++) {
+          const nextEntry = history[j]!;
+          if (nextEntry.type === "input") break;
+          if (nextEntry.type === "error") {
+            shouldRecover = false;
+          } else {
+            if (nextEntry.variant === "info" && nextEntry.value === "Execution cancelled") {
+              shouldRecover = false;
+            }
+          }
+          oldRelatedEntries.push(nextEntry);
+        }
+
+        if (!shouldRecover) {
+          historyStore.history.push(entry);
+          Array.prototype.push.apply(historyStore.history, oldRelatedEntries);
+          continue;
+        }
+
+        await this.execute(entry.value, false);
+      }
+    }
+
+    this.isExecuting = false;
+    clearTimeout(executingTimer);
+    this.showExecuting = false;
+  },
+
   abort() {
     executionAbortController?.abort();
     if (this.isExecuting) {
       this.isExecuting = false;
-      appendOutput("info", "Execution cancelled");
+      historyStore.appendOutput("info", "Execution cancelled");
     }
   },
 });
