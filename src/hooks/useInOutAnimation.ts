@@ -25,9 +25,6 @@ function useInOutAnimation({ duration, onClose }: UseInOutAnimationOptions) {
 
   // Handle fade-in animation on mount
   useEffect(() => {
-    // Start with invisible state
-    setIsVisible(false);
-
     // After a tiny delay, make it visible to trigger the animation
     const timer = requestAnimationFrame(() => {
       setIsVisible(true);

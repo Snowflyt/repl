@@ -172,14 +172,13 @@ const ButtonGroup = React.memo<{
   const isTouchDevice = useIsTouchDevice();
 
   // Generate unique ID for this instance
-  // eslint-disable-next-line sonarjs/pseudo-random
-  const menuId = useRef(`menu-${Math.random().toString(36).substring(2, 9)}`);
+  const [menuId] = useState(() => `menu-${crypto.randomUUID()}`);
 
   // Close dropdown when clicking outside or opening another menu
   useEffect(() => {
     if (showMenu) {
       // Register this as the active menu
-      openMenuId = menuId.current;
+      openMenuId = menuId;
 
       const handleClick = (e: MouseEvent) => {
         // Ensure target is an Element before using closest
@@ -190,10 +189,10 @@ const ButtonGroup = React.memo<{
 
         // Check if the click is on this menu button
         const target = e.target;
-        const isMenuButton = target.closest(`[data-menu-id="${menuId.current}"]`);
+        const isMenuButton = target.closest(`[data-menu-id="${menuId}"]`);
 
         // Close if clicked outside or if another menu was opened
-        if (!isMenuButton || openMenuId !== menuId.current) {
+        if (!isMenuButton || openMenuId !== menuId) {
           setShowMenu(false);
         }
       };
@@ -201,7 +200,7 @@ const ButtonGroup = React.memo<{
       document.addEventListener("click", handleClick);
       return () => document.removeEventListener("click", handleClick);
     }
-  }, [showMenu]);
+  }, [showMenu, menuId]);
 
   return (
     <div className="absolute top-0 right-0 flex items-center p-0.5">
@@ -254,11 +253,11 @@ const ButtonGroup = React.memo<{
           <button
             type="button"
             title="Actions"
-            data-menu-id={menuId.current}
+            data-menu-id={menuId}
             onClick={(e) => {
               e.stopPropagation();
               // Close other menus when opening this one
-              if (!showMenu && openMenuId && openMenuId !== menuId.current) {
+              if (!showMenu && openMenuId && openMenuId !== menuId) {
                 // Trigger a document click to close other menus
                 document.dispatchEvent(new MouseEvent("click"));
               }
