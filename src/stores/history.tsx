@@ -9,6 +9,15 @@ import { show } from "../utils/show";
 import sandboxStore from "./sandbox";
 import settingsStore from "./settings";
 
+/**
+ * Returns true if the given input string is a REPL command (starts with ':' after optional spaces).
+ * @param input The user input string.
+ * @returns Whether the input is a REPL command.
+ */
+export function isReplCommand(input: string): boolean {
+  return /^\s*:/.test(input);
+}
+
 const historyStore = create({
   history: [] as (HistoryEntry | { type: "recovered-mark" })[],
 

@@ -6,7 +6,7 @@ import type { HistoryEntry } from "../types";
 import type { Sandbox } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
 
-import historyStore from "./history";
+import historyStore, { isReplCommand } from "./history";
 
 let sandbox: Sandbox | null = null;
 let executionAbortController: AbortController | null = null;
@@ -240,6 +240,19 @@ const sandboxStore = create({
     for (let i = 0; i < history.length; i++) {
       const entry = history[i]!;
       if (entry.type === "input") {
+        // Skip re-executing REPL commands (e.g., :check, :type). Preserve original entries as-is.
+        if (isReplCommand(entry.value)) {
+          const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
+          for (let j = i + 1; j < history.length; j++) {
+            const nextEntry = history[j]!;
+            if (nextEntry.type === "input") break;
+            oldRelatedEntries.push(nextEntry);
+          }
+          historyStore.history.push(entry);
+          Array.prototype.push.apply(historyStore.history, oldRelatedEntries);
+          continue;
+        }
+
         let shouldRecover = true;
         const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
         for (let j = i + 1; j < history.length; j++) {

@@ -9,6 +9,7 @@ import * as ts from "typescript";
 
 let env: ReturnType<typeof createVirtualTypeScriptEnvironment> | null = null;
 let initialized = false;
+let envInitPromise: Promise<void> | null = null;
 let ataRunner: ReturnType<typeof setupTypeAcquisition> | null = null;
 let ataInFlight: Promise<void> | null = null;
 let ataResolve: (() => void) | null = null;
@@ -471,65 +472,77 @@ function buildEnvFromSnippets(snippets: string[]): string {
 
 async function ensureEnv(): Promise<void> {
   if (initialized && env) return;
+  if (envInitPromise) {
+    await envInitPromise;
+    return;
+  }
 
-  const compilerOptions: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ESNext,
-    lib: ["ESNext", "DOM", "DOM.Iterable"],
-    allowJs: true,
-    checkJs: false,
-    skipLibCheck: true,
-    noEmit: true,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    moduleDetection: ts.ModuleDetectionKind.Force,
-  };
-  // Build an FS map with the correct lib files for the current TS version/options
-  // Wrap fetcher to emit progress notifications similar to ATA
-  let libFetchCount = 0;
-  let libStarted = false;
-  const notifyLib = (
-    phase: "started" | "progress" | "finished",
-    extra?: Record<string, unknown>,
-  ) => {
-    try {
-      (self as unknown as Worker).postMessage({
-        scope: "completion",
-        event: "lib-download",
-        data: { phase, ...(extra ?? {}) },
-      });
-    } catch {
-      // ignore
-    }
-  };
-  const wrappedFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (!libStarted) {
-      libStarted = true;
-      notifyLib("started");
-    }
-    const res = await fetch(input as any, init);
-    libFetchCount++;
-    notifyLib("progress", { filesReceived: libFetchCount });
-    return res;
-  };
-  const fsMap = await createDefaultMapFromCDN(
-    compilerOptions,
-    ts.version,
-    false,
-    ts,
-    undefined,
-    wrappedFetch,
-  );
-  notifyLib("finished", { filesReceived: libFetchCount, success: true });
-  // Ensure lib.d.ts contains the full ESNext lib content to provide global types
-  let libSource: string | null = null;
-  if (fsMap.has("/lib.esnext.full.d.ts")) libSource = fsMap.get("/lib.esnext.full.d.ts")!;
-  if (libSource) fsMap.set("/lib.d.ts", libSource);
-  // Ensure REPL file exists from the start
-  if (!fsMap.has(REPL_FILE)) fsMap.set(REPL_FILE, "export {};\n\n");
+  envInitPromise = (async () => {
+    const compilerOptions: ts.CompilerOptions = {
+      target: ts.ScriptTarget.ESNext,
+      lib: ["ESNext", "DOM", "DOM.Iterable"],
+      allowJs: true,
+      checkJs: false,
+      skipLibCheck: true,
+      noEmit: true,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      moduleDetection: ts.ModuleDetectionKind.Force,
+    };
+    // Build an FS map with the correct lib files for the current TS version/options
+    // Wrap fetcher to emit progress notifications similar to ATA
+    let libFetchCount = 0;
+    let libStarted = false;
+    const notifyLib = (
+      phase: "started" | "progress" | "finished",
+      extra?: Record<string, unknown>,
+    ) => {
+      try {
+        (self as unknown as Worker).postMessage({
+          scope: "completion",
+          event: "lib-download",
+          data: { phase, ...(extra ?? {}) },
+        });
+      } catch {
+        // ignore
+      }
+    };
+    const wrappedFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!libStarted) {
+        libStarted = true;
+        notifyLib("started");
+      }
+      const res = await fetch(input as any, init);
+      libFetchCount++;
+      notifyLib("progress", { filesReceived: libFetchCount });
+      return res;
+    };
+    const fsMap = await createDefaultMapFromCDN(
+      compilerOptions,
+      ts.version,
+      false,
+      ts,
+      undefined,
+      wrappedFetch,
+    );
+    notifyLib("finished", { filesReceived: libFetchCount, success: true });
+    // Ensure lib.d.ts contains the full ESNext lib content to provide global types
+    let libSource: string | null = null;
+    if (fsMap.has("/lib.esnext.full.d.ts")) libSource = fsMap.get("/lib.esnext.full.d.ts")!;
+    if (libSource) fsMap.set("/lib.d.ts", libSource);
+    // Ensure REPL file exists from the start
+    if (!fsMap.has(REPL_FILE)) fsMap.set(REPL_FILE, "export {};\n\n");
 
-  const system = createSystem(fsMap);
-  env = createVirtualTypeScriptEnvironment(system, Array.from(fsMap.keys()), ts, compilerOptions);
+    const system = createSystem(fsMap);
+    env = createVirtualTypeScriptEnvironment(system, Array.from(fsMap.keys()), ts, compilerOptions);
 
-  initialized = true;
+    initialized = true;
+  })();
+
+  try {
+    await envInitPromise;
+  } finally {
+    envInitPromise = null;
+  }
   // Initialize ATA once the env is ready
   initATA();
   // Guarantee REPL file is registered as a root
@@ -786,6 +799,15 @@ function getCompletions(cursor: number) {
   return { items };
 }
 
+function applyMultilineHeuristics(text: string): string {
+  if (!text) return text;
+  let s = text;
+  s = s.replace(/\{( {4,})/g, (_m, spaces: string) => "{\n" + spaces);
+  s = s.replace(/;( {4,})/g, (_m, spaces: string) => ";\n" + spaces);
+  s = s.replace(/;}/g, ";\n}");
+  return s;
+}
+
 const handlers = {
   async init() {
     await ensureEnv();
@@ -793,6 +815,85 @@ const handlers = {
     if (!env!.sys.fileExists(REPL_FILE)) writeVfs(REPL_FILE, "export {};\n\n");
     ensureModuleRegistered();
     return true;
+  },
+
+  async typeOf({ expr }: { expr: string }) {
+    await ensureEnv();
+    // Build a synthetic type alias to evaluate a type-level expression provided by the user
+    // Users will pass a type expression (use 'typeof foo' for value expressions):
+    //   type __repl_type_result___ = <type expr>;
+    const wrapperName = "__repl_type_result___";
+    const asType = `type ${wrapperName} = ${expr};`;
+    writeIndex(asType);
+    ensureModuleRegistered();
+    // Trigger ATA for any bare imports present in the combined module content
+    if (ataRunner) {
+      const combined = env!.sys.readFile(REPL_FILE) ?? asType;
+      const { code: ataCode, packages } = rewriteCodeForAta(combined);
+      if (packages.length > 0) {
+        lastAtaSourceImports.splice(0, lastAtaSourceImports.length, ...packages);
+        try {
+          await ataRunner(ataCode);
+        } catch (e) {
+          // Log and continue; type info for external packages may be partial
+          console.error("[completion:ata] runner error", e);
+        }
+        // If an ATA run is in-flight, wait for it to settle so we can provide accurate types
+        if (ataInFlight)
+          try {
+            await ataInFlight;
+          } catch (e) {
+            // Ignore
+          } finally {
+            ensureModuleRegistered();
+          }
+      } else {
+        lastAtaSourceImports.splice(0, lastAtaSourceImports.length);
+      }
+    }
+    // Helper to extract type text for current REPL_FILE by inspecting the alias node directly
+    const extractTypeText = (): string => {
+      const ls = env!.languageService;
+      const program = ls.getProgram();
+      const sf = program?.getSourceFile(REPL_FILE);
+      if (!sf) return "";
+      const checker = program!.getTypeChecker();
+      let typeText = "";
+      sf.forEachChild((node) => {
+        if (ts.isTypeAliasDeclaration(node) && ts.isIdentifier(node.name)) {
+          if (node.name.text === wrapperName) {
+            try {
+              const t = checker.getTypeFromTypeNode(node.type);
+              typeText = applyMultilineHeuristics(
+                checker.typeToString(
+                  t,
+                  node,
+                  ts.TypeFormatFlags.NoTruncation |
+                    ts.TypeFormatFlags.UseFullyQualifiedType |
+                    ts.TypeFormatFlags.MultilineObjectLiterals |
+                    ts.TypeFormatFlags.InTypeAlias,
+                ),
+              );
+            } catch (e) {
+              // ignore
+            }
+          }
+        }
+      });
+      return (typeText || "").trim();
+    };
+
+    // Extract the resolved type from the synthetic type alias, without any typeof fallback
+    try {
+      const ls = env!.languageService;
+      const program = ls.getProgram();
+      const sf = program?.getSourceFile(REPL_FILE);
+      if (!sf) return { type: "<unknown>" } as const;
+      const typeText = extractTypeText();
+      return { type: typeText || "<unknown>" } as const;
+    } catch (e) {
+      return { type: "<unknown>" } as const;
+    }
   },
 
   async updateHistory({ snippets }: { snippets: string[] }) {
@@ -1114,6 +1215,7 @@ self.onmessage = (e: MessageEvent) => {
     analyzeTrigger: true,
     resolveDetail: true,
     debugGetHistory: true,
+    typeOf: true,
   };
   if (typeof id !== "string" || typeof type !== "string" || !allowed[type]) return;
   // Execute handler synchronously and resolve promise responses

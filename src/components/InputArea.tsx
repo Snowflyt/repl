@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 
 import type { CompletionItem } from "../services/completion/service";
 import { completionService } from "../services/completion/service";
-import { useHistoryStore } from "../stores/history";
+import historyStore, { isReplCommand, useHistoryStore } from "../stores/history";
 import sandboxStore, { useSandboxStore } from "../stores/sandbox";
 import { useSettingsStore } from "../stores/settings";
 import { createMarkedRenderer, highlightCode } from "../utils/highlight";
@@ -38,6 +38,37 @@ const InputArea: React.FC<InputAreaProps> = ({
   ref,
 }) => {
   const md = useMemo(createMarkedRenderer, []);
+
+  // Normalize compiler-printed type indentation: if lines start with many spaces (often 4-space indents),
+  // reduce leading spaces by half per line to approximate 2-space indentation without custom pretty-printing.
+  const normalizeTypeIndent = useCallback((type: string): string => {
+    if (!type) return type;
+    const lines = type.replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length <= 1) return type.trimEnd();
+    // Decide whether to halve based on most lines using multiples of 4 spaces
+    const spaceCounts = lines
+      .map((l) => {
+        const m = /^( +)/.exec(l);
+        return m ? m[1]!.length : 0;
+      })
+      .filter((n) => n > 0);
+    const div4 = spaceCounts.filter((n) => n % 4 === 0).length;
+    const shouldHalve = spaceCounts.length > 0 && div4 >= Math.ceil(spaceCounts.length * 0.6);
+    const out =
+      shouldHalve ?
+        lines.map((l) => {
+          const m = /^( +)/.exec(l);
+          if (!m) return l;
+          const n = m[1]!.length;
+          const nn = Math.max(0, Math.floor(n / 2));
+          return (nn ? " ".repeat(nn) : "") + l.slice(n);
+        })
+      : lines;
+    return out
+      .join("\n")
+      .replace(/[ \t]+$/gm, "")
+      .trimEnd();
+  }, []);
 
   /* Input */
   const [input, setInput] = useState("");
@@ -80,6 +111,25 @@ const InputArea: React.FC<InputAreaProps> = ({
     onInputHistoryIndexChange(-1);
     tempInputRef.current = "";
   }, [onInputHistoryIndexChange]);
+
+  // Transform ':type' / ':t' command input into an expression-completion context
+  // Example: ':type Foo' => 'type __repl_type_value__ = Foo' with cursor adjusted
+  const TYPE_PREFIX = "type __repl_type_result___ = ";
+  const transformForTypeMode = useCallback(
+    (
+      value: string,
+      cursor: number,
+    ): { code: string; pos: number; typePrefix: number; cmdPrefix: number } | null => {
+      const m = /^\s*:(?:type|t)\s+/.exec(value);
+      if (!m) return null;
+      const exprStart = m[0].length;
+      if (cursor <= exprStart) return null; // No completions in command prefix
+      const code = TYPE_PREFIX + value.slice(exprStart);
+      const pos = TYPE_PREFIX.length + (cursor - exprStart);
+      return { code, pos, typePrefix: TYPE_PREFIX.length, cmdPrefix: exprStart };
+    },
+    [],
+  );
 
   const inputAreaRef = useRef<HTMLTextAreaElement>(null);
   const caretMeasureRef = useRef<HTMLPreElement>(null);
@@ -395,17 +445,53 @@ const InputArea: React.FC<InputAreaProps> = ({
 
   const executeCode = useCallback(
     async (customInput?: string) => {
+      const raw = customInput ?? input;
+      const trimmed = raw.trimStart();
+
+      // Handle :type / :t command (print the static type of an expression)
+      if (trimmed.startsWith(":type ") || trimmed.startsWith(":t ")) {
+        // Extract the expression following the command and a space
+        const expr = trimmed.startsWith(":type ") ? trimmed.slice(6) : trimmed.slice(3);
+        // Ensure the type service is ready regardless of intellisense setting
+        await completionService.init();
+        // Keep worker history up-to-date for accurate types
+        const snippets: string[] = [];
+        let pending: string | null = null;
+        for (const e of historyRef.current) {
+          if (e.type === "input") {
+            if (pending) snippets.push(pending);
+            // Skip REPL commands (e.g., :type)
+            pending = isReplCommand(e.value) ? null : e.value;
+          } else if (e.type === "error") {
+            pending = null;
+          } else if (e.type === "output") {
+            if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
+          }
+        }
+        if (pending) snippets.push(pending);
+        await completionService.updateHistory(snippets);
+        const { type } = await completionService.getTypeOf(expr);
+        // Append to history like a normal execution
+        historyStore.appendInput(raw);
+        // Pretty-print the type into multi-line with 2-space indentation
+        const pretty = normalizeTypeIndent(type);
+        historyStore.appendOutput(pretty);
+        // Local reset mirrors normal execution UX
+        resetInput();
+        return;
+      }
+
       let inputReset = false;
       const executingTimer = setTimeout(() => {
         inputReset = true;
         if (!customInput) resetInput();
       }, 10);
-      await sandboxStore.execute(customInput || input);
+      await sandboxStore.execute(raw);
       clearTimeout(executingTimer);
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (!customInput && !inputReset) resetInput();
     },
-    [input, resetInput],
+    [input, normalizeTypeIndent, resetInput],
   );
 
   /* Settings */
@@ -418,26 +504,21 @@ const InputArea: React.FC<InputAreaProps> = ({
 
   // Compute success snippets (simplified: input followed by no error until next input)
   const computeSuccessSnippets = useCallback((): string[] => {
-    const hx = historyRef.current as unknown as (
-      | { type: "input"; value: string }
-      | { type: "output"; variant?: "info" | "warn" | "error"; value: string }
-      | { type: "error"; value: string }
-      | { type: "recovered-mark" }
-    )[];
-    const res: string[] = [];
+    const result: string[] = [];
     let pending: string | null = null;
-    for (const e of hx) {
+    for (const e of historyRef.current) {
       if (e.type === "input") {
-        if (pending) res.push(pending);
-        pending = e.value;
+        if (pending) result.push(pending);
+        // Skip REPL commands (e.g., :type)
+        pending = isReplCommand(e.value) ? null : e.value;
       } else if (e.type === "error") {
         pending = null;
       } else if (e.type === "output") {
         if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
       }
     }
-    if (pending) res.push(pending);
-    return res;
+    if (pending) result.push(pending);
+    return result;
   }, []);
 
   useEffect(() => {
@@ -450,18 +531,43 @@ const InputArea: React.FC<InputAreaProps> = ({
   const requestCompletions = useCallback(
     async (code: string, pos: number) => {
       if (!settings.editor.intellisense) return;
+
+      // Allow completions in :type mode (cursor past the command prefix),
+      // but suppress for other REPL commands or when cursor is within the command prefix.
+      const transformed = transformForTypeMode(code, pos);
+      if (isReplCommand(code) && !transformed) {
+        setSuggestions(null);
+        return;
+      }
+
       await completionService.init();
+      // Special handling for :type mode to provide expression completions
+      const reqCode = transformed ? transformed.code : code;
+      const reqPos = transformed ? transformed.pos : pos;
       const seq = ++completionSeqRef.current;
-      const { items } = await completionService.getCompletions(code, pos);
+      const { items } = await completionService.getCompletions(reqCode, reqPos);
       // Ignore stale results if a newer request has started
       if (seq !== completionSeqRef.current) return;
-      setSuggestions(items);
+      // Map replacement spans back to original positions when transformed
+      let mapped = items;
+      if (transformed) {
+        mapped = items.map((it) => {
+          const rep = it.replacement;
+          if (rep && typeof rep.start === "number") {
+            const start = Math.max(0, rep.start - transformed.typePrefix + transformed.cmdPrefix);
+            return { ...it, replacement: { ...rep, start } } as CompletionItem;
+          }
+          return it;
+        });
+      }
+
+      setSuggestions(mapped);
       setSelIndex(0);
       setSelectedDetail(null);
       setLoadingDetail(false);
       updateCaretPosition();
     },
-    [updateCaretPosition, settings.editor.intellisense],
+    [updateCaretPosition, settings.editor.intellisense, transformForTypeMode],
   );
 
   // Apply selected completion using TS-provided replacement span when available
@@ -539,8 +645,11 @@ const InputArea: React.FC<InputAreaProps> = ({
     const token = ++detailSeqRef.current;
     setLoadingDetail(true);
     detailDebounceRef.current = window.setTimeout(() => {
+      const tf = transformForTypeMode(code, cursor);
+      const reqCode = tf ? tf.code : code;
+      const reqPos = tf ? tf.pos : cursor;
       void completionService
-        .getDetail(code, cursor, { name: item.label, source: item.source })
+        .getDetail(reqCode, reqPos, { name: item.label, source: item.source })
         .then((d) => {
           if (token !== detailSeqRef.current) return; // stale
           // Cache result (cap size)
@@ -568,7 +677,7 @@ const InputArea: React.FC<InputAreaProps> = ({
           if (token === detailSeqRef.current) setLoadingDetail(false);
         });
     }, 120);
-  }, [suggestions, selIndex, md, scheduleIdle]);
+  }, [suggestions, selIndex, md, scheduleIdle, transformForTypeMode]);
 
   // Current selected item's cache key (for doc HTML lookup)
   const currentDetailKey = useMemo(() => {
@@ -718,6 +827,14 @@ const InputArea: React.FC<InputAreaProps> = ({
                   // After the deletion occurs, decide whether to keep and refresh suggestions
                   const el = e.currentTarget;
                   setTimeout(() => {
+                    // For commands, only suppress when not in :type expression context
+                    const pos = el.selectionStart;
+                    const val = el.value;
+                    const tf = transformForTypeMode(val, pos);
+                    if (isReplCommand(val) && !tf) {
+                      setSuggestions(null);
+                      return;
+                    }
                     if (el.selectionStart !== el.selectionEnd) {
                       // If there's a selection, hide popup and skip
                       setSuggestions(null);
@@ -727,9 +844,9 @@ const InputArea: React.FC<InputAreaProps> = ({
                       setSuggestions(null);
                       return;
                     }
-                    const pos = el.selectionStart;
-                    const val = el.value;
-                    void completionService.analyzeTrigger(val, pos).then((action) => {
+                    const reqCode = tf ? tf.code : val;
+                    const reqPos = tf ? tf.pos : pos;
+                    void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
                       if (action.kind === "close") {
                         setSuggestions(null);
                         return;
@@ -876,6 +993,15 @@ const InputArea: React.FC<InputAreaProps> = ({
                   return;
                 }
                 const el = e.currentTarget;
+                // Allow :type expression completions; suppress other commands or when in command prefix
+                {
+                  const pos = el.selectionStart;
+                  const tf = transformForTypeMode(el.value, pos);
+                  if (isReplCommand(el.value) && !tf) {
+                    setSuggestions(null);
+                    return;
+                  }
+                }
                 updateCaretPosition();
                 if (el.selectionStart === el.selectionEnd) {
                   scheduleCompletionsFromEl(el, 0);
@@ -952,8 +1078,16 @@ const InputArea: React.FC<InputAreaProps> = ({
                 setSuggestions(null);
                 return;
               }
+              // Allow :type expression completions; suppress for other commands or when in command prefix
               const pos = el.selectionStart;
-              void completionService.analyzeTrigger(newValue, pos).then((action) => {
+              const tf = transformForTypeMode(newValue, pos);
+              if (isReplCommand(newValue) && !tf) {
+                setSuggestions(null);
+                return;
+              }
+              const reqCode = tf ? tf.code : newValue;
+              const reqPos = tf ? tf.pos : pos;
+              void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
                 if (action.kind === "close") {
                   setSuggestions(null);
                   return;
