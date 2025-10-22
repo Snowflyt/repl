@@ -193,7 +193,7 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
         boxSizing: "content-box",
       }}>
       {/* Left list: its own card */}
-      <div className="w-80 overflow-hidden rounded-md border border-gray-700/60 bg-[#1a1520]/80">
+      <div className="max-h-[60vh] w-80 max-w-[calc(100vw-32px)] overflow-hidden rounded-md border border-gray-700/60 bg-[#1a1520]/80">
         <div
           ref={setListRef}
           data-list="1"
