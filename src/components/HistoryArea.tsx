@@ -7,7 +7,9 @@ import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useHasScrollbar, useIsTouchDevice, useScrollbarWidth } from "../hooks";
+import { completionService } from "../services/completion/service";
 import historyStore, { useHistoryStore } from "../stores/history";
+import notificationsStore from "../stores/notifications";
 import sandboxStore from "../stores/sandbox";
 import { useSettingsStore } from "../stores/settings";
 import type { HistoryEntry } from "../types";
@@ -15,6 +17,7 @@ import { highlightCode } from "../utils/highlight";
 
 import HeaderControls from "./HeaderControls";
 import type { InputAreaRef } from "./InputArea";
+import NotificationCenter from "./NotificationCenter";
 import SettingsPanel from "./SettingsPanel";
 
 const ansi_up = new AnsiUp();
@@ -30,6 +33,35 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
 
   const hasScrollbar = useHasScrollbar(historyAreaRef, [history]);
   const scrollbarWidth = useScrollbarWidth();
+  const [notificationBottom, setNotificationBottom] = useState<number>(16);
+
+  // Recalculate notification bottom offset so it doesn't overlap the InputArea (which sits below HistoryArea)
+  useEffect(() => {
+    const recalculate = () => {
+      const el = historyAreaRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const gap = Math.max(0, Math.round(window.innerHeight - rect.bottom));
+      // Keep a base 16px padding above the InputArea
+      setNotificationBottom(16 + gap);
+    };
+    recalculate();
+    const onResize = () => recalculate();
+    window.addEventListener("resize", onResize);
+    let ro: ResizeObserver | null = null;
+    try {
+      if (typeof ResizeObserver !== "undefined" && historyAreaRef.current) {
+        ro = new ResizeObserver(recalculate);
+        ro.observe(historyAreaRef.current);
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return () => {
+      window.removeEventListener("resize", onResize);
+      ro?.disconnect();
+    };
+  }, []);
 
   // Scroll to the bottom of the history area when the history changes
   useEffect(() => {
@@ -40,6 +72,91 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
 
   const [showSettings, setShowSettings] = useState(false);
   const settings = useSettingsStore();
+
+  // Subscribe to ATA events and drive notifications
+  useEffect(() => {
+    const unsubscribe = completionService.onAta((ev) => {
+      if (ev.phase === "started") {
+        const pkgs: string[] = Array.isArray(ev.packages) ? ev.packages : [];
+        const head = pkgs.slice(0, 3).join(", ");
+        const more = pkgs.length > 3 ? ` and ${pkgs.length - 3} more` : "";
+        let msg: string;
+        if (pkgs.length) msg = `Acquiring type definitions for ${head}${more}…`;
+        else msg = "Acquiring type definitions…";
+        notificationsStore.add({
+          id: "ata-progress",
+          kind: "progress",
+          title: "Auto type acquisition",
+          message: msg,
+          progress: { mode: "indeterminate", note: undefined },
+          dismissible: true,
+        });
+      } else if (ev.phase === "progress") {
+        const files = typeof ev.filesReceived === "number" ? ev.filesReceived : undefined;
+        notificationsStore.update("ata-progress", {
+          progress: { mode: "indeterminate", note: files ? `${files} files` : undefined },
+        });
+      } else {
+        // Remove progress toast
+        notificationsStore.remove("ata-progress");
+        const pkgs: string[] = Array.isArray(ev.packages) ? ev.packages : [];
+        const files = typeof ev.filesReceived === "number" ? ev.filesReceived : undefined;
+        const head = pkgs.slice(0, 3).join(", ");
+        const more = pkgs.length > 3 ? ` and ${pkgs.length - 3} more` : "";
+        const filesNote = files ? ` (${files} files)` : "";
+        let msg: string;
+        if (pkgs.length) msg = `Successfully acquired ${head}${more}${filesNote}.`;
+        else msg = "Type acquisition completed.";
+        notificationsStore.add({
+          id: `ata-success-${Date.now()}`,
+          kind: "success",
+          title: "Auto type acquisition",
+          message: msg,
+          autoHideMs: 3000,
+          dismissible: true,
+        });
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Subscribe to TS lib downloads (createDefaultMapFromCDN) and drive notifications
+  useEffect(() => {
+    const unsubscribe = completionService.onLibDownload((ev) => {
+      if (ev.phase === "started") {
+        notificationsStore.add({
+          id: "tslib-progress",
+          kind: "progress",
+          title: "Downloading TypeScript lib files",
+          message: "Preparing standard library types…",
+          progress: { mode: "indeterminate", note: undefined },
+          dismissible: true,
+        });
+      } else if (ev.phase === "progress") {
+        const files = typeof ev.filesReceived === "number" ? ev.filesReceived : undefined;
+        notificationsStore.update("tslib-progress", {
+          progress: { mode: "indeterminate", note: files ? `${files} files` : undefined },
+        });
+      } else {
+        notificationsStore.remove("tslib-progress");
+        const files = typeof ev.filesReceived === "number" ? ev.filesReceived : undefined;
+        const note = files ? ` (${files} files)` : "";
+        notificationsStore.add({
+          id: `tslib-success-${Date.now()}`,
+          kind: "success",
+          title: "TypeScript lib ready",
+          message: `Standard library types downloaded${note}.`,
+          autoHideMs: 2500,
+          dismissible: true,
+        });
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   return (
     <div
@@ -69,6 +186,14 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
             onJumpToInputHistory={onJumpToInputHistory}
           />,
       )}
+
+      {/* Notifications overlay in bottom-right */}
+      <NotificationCenter
+        style={{
+          right: hasScrollbar ? `calc(1rem + ${scrollbarWidth}px)` : "1rem",
+          bottom: notificationBottom,
+        }}
+      />
     </div>
   );
 };

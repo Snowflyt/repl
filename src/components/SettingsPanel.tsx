@@ -151,6 +151,13 @@ const EditorSection = React.memo(function EditorSection() {
           onChange={() => (settingsStore.editor.syntaxHighlighting = !editor.syntaxHighlighting)}
         />
       </SettingRow>
+      <SettingRow label="Intellisense" htmlFor="intellisense">
+        <Switch
+          id="intellisense"
+          value={editor.intellisense}
+          onChange={() => (settingsStore.editor.intellisense = !editor.intellisense)}
+        />
+      </SettingRow>
     </Section>
   );
 });

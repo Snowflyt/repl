@@ -1,12 +1,25 @@
 import { Icon } from "@iconify/react";
 import { clsx } from "clsx";
-import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 
+import type { CompletionItem } from "../services/completion/service";
+import { completionService } from "../services/completion/service";
 import { useHistoryStore } from "../stores/history";
 import sandboxStore, { useSandboxStore } from "../stores/sandbox";
 import { useSettingsStore } from "../stores/settings";
-import { highlightCode } from "../utils/highlight";
+import { createMarkedRenderer, highlightCode } from "../utils/highlight";
 import { isMacOS } from "../utils/platform";
+
+import CompletionPopup from "./CompletionPopup";
 
 export interface InputAreaProps {
   ref?: React.Ref<InputAreaRef>;
@@ -24,10 +37,42 @@ const InputArea: React.FC<InputAreaProps> = ({
   onInputHistoryIndexChange,
   ref,
 }) => {
+  const md = useMemo(createMarkedRenderer, []);
+
   /* Input */
   const [input, setInput] = useState("");
   const tempInputRef = useRef("");
   const [rows, setRows] = useState(1);
+  const [suggestions, setSuggestions] = useState<CompletionItem[] | null>(null);
+  const [selIndex, setSelIndex] = useState(0);
+  const [selectedDetail, setSelectedDetail] = useState<{
+    detail?: string;
+    documentation?: string;
+  } | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  // Cache for completion details to avoid flicker and redundant worker calls
+  const detailCacheRef = useRef<Map<string, { detail?: string; documentation?: string }>>(
+    new Map(),
+  );
+  const MAX_DETAIL_CACHE = 400;
+  // Cache for rendered HTML of documentation to avoid parsing on hot path
+  const docHtmlCacheRef = useRef<Map<string, string>>(new Map());
+  const [docHtmlVersion, setDocHtmlVersion] = useState(0); // trigger re-render when HTML gets ready
+  // Schedule heavy work (like markdown parse) off the hot render path
+  const scheduleIdle = useCallback((fn: () => void) => {
+    const anyWin = window as unknown as { requestIdleCallback?: (cb: () => void) => void };
+    if (typeof anyWin.requestIdleCallback === "function") anyWin.requestIdleCallback(fn);
+    else setTimeout(fn, 0);
+  }, []);
+  // Right detail pane positioning
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const [detailPos, setDetailPos] = useState<{ left: number; top: number } | null>(null);
+  // Constrain detail pane width to available space to the right of the list
+  const [detailMaxWidth, setDetailMaxWidth] = useState<number | null>(null);
+  // Guard against out-of-order async completion results
+  const completionSeqRef = useRef(0);
+  // Token to detect stale scheduled callbacks across rapid key events
+  const keySeqRef = useRef(0);
 
   const resetInput = useCallback(() => {
     setInput("");
@@ -37,6 +82,38 @@ const InputArea: React.FC<InputAreaProps> = ({
   }, [onInputHistoryIndexChange]);
 
   const inputAreaRef = useRef<HTMLTextAreaElement>(null);
+  const caretMeasureRef = useRef<HTMLPreElement>(null);
+  const [caretPos, setCaretPos] = useState<{ left: number; top: number } | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const [popupPos, setPopupPos] = useState<{ left: number; top: number } | null>(null);
+  // Whether to render the right detail pane (hidden on very narrow screens)
+  const [showDetailPane, setShowDetailPane] = useState(true);
+  // Track whether the popup position recalculation is triggered by a size change
+  const recalculateFromSizeRef = useRef(false);
+  // Only show popup after we've positioned it with real measurements for this session
+  const [popupReady, setPopupReady] = useState(false);
+  const hadSuggestionsRef = useRef(false);
+  // IME composition state (mobile keyboards / CJK input)
+  const composingRef = useRef(false);
+  // Last measured metrics from popup component
+  const lastPopupMetricsRef = useRef<{
+    rowHeight: number;
+    width: number;
+    height: number;
+    hasOverflow: boolean;
+  } | null>(null);
+  useEffect(() => {
+    const has = !!suggestions?.length;
+    const prev = hadSuggestionsRef.current;
+    if (has && !prev) {
+      // New session: reset position and hide until measured/positioned
+      setPopupPos(null);
+      setPopupReady(false);
+      setSelectedDetail(null);
+      setLoadingDetail(false);
+    }
+    hadSuggestionsRef.current = has;
+  }, [suggestions]);
 
   const refocus = useCallback(() => {
     const element = inputAreaRef.current;
@@ -69,8 +146,226 @@ const InputArea: React.FC<InputAreaProps> = ({
     setRows(Math.max(1, actualRows));
   }, []);
 
+  const updateCaretPosition = useCallback(() => {
+    const el = inputAreaRef.current;
+    const pre = caretMeasureRef.current;
+    if (!el || !pre) return;
+    const caret = el.selectionStart;
+    const value = el.value;
+    // Prepare mirror content up to caret from the live DOM value
+    pre.textContent = value.slice(0, caret) || "";
+    const marker = document.createElement("span");
+    marker.textContent = "";
+    marker.style.display = "inline-block";
+    marker.style.width = "1px";
+    marker.style.height = "1em";
+    pre.appendChild(marker);
+    const rect = marker.getBoundingClientRect();
+    setCaretPos({ left: rect.left, top: rect.bottom });
+    marker.remove();
+  }, []);
+
+  // Keep caret position in sync with viewport changes (resize/scroll/keyboard)
+  useLayoutEffect(() => {
+    let raf: number | null = null;
+    const onChange = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        updateCaretPosition();
+      });
+    };
+    window.addEventListener("resize", onChange);
+    window.addEventListener("scroll", onChange);
+    window.addEventListener("orientationchange", onChange);
+    window.visualViewport?.addEventListener("resize", onChange);
+    window.visualViewport?.addEventListener("scroll", onChange);
+    return () => {
+      window.removeEventListener("resize", onChange);
+      window.removeEventListener("scroll", onChange);
+      window.removeEventListener("orientationchange", onChange);
+      window.visualViewport?.removeEventListener("resize", onChange);
+      window.visualViewport?.removeEventListener("scroll", onChange);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [updateCaretPosition]);
+
+  // Layout gaps for completion popup
+  const POPUP_GAP_ABOVE = 16; // distance between caret and popup when shown above
+  const POPUP_GAP_BELOW = 6; // small spacing when shown below
+
+  // Recalculate popup position to stay on screen and above when needed
+  useLayoutEffect(() => {
+    if (!suggestions || !caretPos) {
+      setPopupPos((prev) => (prev === null ? prev : null));
+      setDetailPos(null);
+      setShowDetailPane(true);
+      return;
+    }
+    const calculate = () => {
+      const padding = 8;
+      const vv = window.visualViewport;
+      const vw = Math.round(vv?.width ?? window.innerWidth);
+      const vh = Math.round(vv?.height ?? window.innerHeight);
+      const rect = suggestionsRef.current?.getBoundingClientRect();
+      // Accurate fallback width: 20rem content width + ~2px border (w-80 + border)
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const fallbackWidth = Math.round(20 * rem + 2);
+      const width = rect?.width ? Math.round(rect.width) : fallbackWidth;
+      // Prefer measured row height reported by popup to predict final height for this suggestions length
+      const measured = lastPopupMetricsRef.current;
+      const rowHeight = measured?.rowHeight ?? Math.round(2 * rem);
+      const visibleRows = Math.min(6, suggestions.length);
+      const height = rowHeight * visibleRows;
+      // Group layout: decide whether to show detail and shift list+detail together
+      const anchorToPrev = recalculateFromSizeRef.current;
+      const gap = 8; // keep a small separation to avoid border overlap
+      const MIN_DETAIL_WIDTH = 200; // px (more permissive on medium widths)
+      const canShowDetail = vw - 2 * padding >= width + gap + MIN_DETAIL_WIDTH;
+      const dEl = detailRef.current;
+      const dRect = dEl?.getBoundingClientRect();
+      const predictedDetailWidth = Math.min(
+        Math.round(40 * rem),
+        Math.max(0, vw - 2 * padding - width - gap),
+      );
+      const dWidth = Math.round(dRect?.width || (canShowDetail ? predictedDetailWidth : 0));
+
+      // Vertical placement for the list
+      const desiredAbove = caretPos.top - height - POPUP_GAP_ABOVE;
+      let listTop = anchorToPrev ? (popupPos?.top ?? desiredAbove) : desiredAbove;
+      if (listTop < padding) {
+        listTop = Math.min(
+          vh - padding - height,
+          Math.max(padding, caretPos.top + POPUP_GAP_BELOW),
+        );
+      }
+      if (listTop < padding) listTop = padding;
+
+      // Horizontal placement
+      let listLeft = caretPos.left + 2;
+      if (canShowDetail) {
+        const groupWidth = width + gap + dWidth;
+        const groupMaxLeft = vw - padding - groupWidth;
+        if (groupMaxLeft < padding) {
+          // Fallback safeguard: clamp list alone
+          listLeft = Math.max(padding, Math.min(listLeft, vw - padding - width));
+        } else {
+          listLeft = Math.max(padding, Math.min(listLeft, groupMaxLeft));
+        }
+      } else {
+        if (listLeft + width + padding > vw) listLeft = Math.max(padding, vw - width - padding);
+        if (listLeft < padding) listLeft = padding;
+      }
+
+      // Apply computed list position
+      setPopupPos((prev) => {
+        const unchanged = prev ? prev.left === listLeft && prev.top === listTop : false;
+        return unchanged ? prev : { left: listLeft, top: listTop };
+      });
+
+      // Apply detail pane position if shown
+      if (canShowDetail) {
+        const dHeight = Math.round(dRect?.height || 0);
+        const dLeft = listLeft + width + gap;
+        let dTop = Math.round(listTop + height - (dHeight || 0));
+        if (dTop < padding) dTop = padding;
+        setDetailPos((prev) => {
+          const unchanged = prev ? prev.left === dLeft && prev.top === dTop : false;
+          return unchanged ? prev : { left: dLeft, top: dTop };
+        });
+        // Ensure the pane doesn't overflow into the list by limiting its max width to remaining space
+        const remainingRight = Math.max(0, vw - padding - dLeft);
+        setDetailMaxWidth(remainingRight);
+      } else {
+        setDetailPos(null);
+        setDetailMaxWidth(null);
+      }
+
+      // Update visibility flag for render
+      setShowDetailPane(canShowDetail);
+      // After we've measured a real rect and set the position at least once, reveal the popup next frame
+      if (!popupReady && rect && rect.height > 0)
+        window.requestAnimationFrame(() => setPopupReady(true));
+      // Reset the flag after a single recalculation
+      recalculateFromSizeRef.current = false;
+    };
+    // Measure now and on viewport and element size changes
+    calculate();
+    const onResize = () => {
+      recalculateFromSizeRef.current = false;
+      calculate();
+    };
+    window.addEventListener("resize", onResize);
+    const onVVResize = () => {
+      recalculateFromSizeRef.current = false;
+      calculate();
+    };
+    const onVVScroll = () => {
+      recalculateFromSizeRef.current = false;
+      calculate();
+    };
+    window.visualViewport?.addEventListener("resize", onVVResize);
+    window.visualViewport?.addEventListener("scroll", onVVScroll);
+    const onScroll = (ev: Event) => {
+      const listContainer = suggestionsRef.current;
+      const paneContainer = detailRef.current;
+      const target = ev.target as Node | null;
+      // If the scroll originates within the detail pane, skip repositioning to avoid interrupting horizontal drag
+      if (paneContainer && target && paneContainer.contains(target)) return;
+      // If the scroll comes from inside the popup list, anchor to previous position; otherwise follow caret
+      recalculateFromSizeRef.current = !!(
+        listContainer &&
+        target &&
+        listContainer.contains(target)
+      );
+      calculate();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    let ro: ResizeObserver | null = null;
+    let roDetail: ResizeObserver | null = null;
+    try {
+      if (typeof ResizeObserver !== "undefined" && suggestionsRef.current) {
+        ro = new ResizeObserver(() => {
+          recalculateFromSizeRef.current = true;
+          calculate();
+        });
+        ro.observe(suggestionsRef.current);
+      }
+      if (typeof ResizeObserver !== "undefined" && detailRef.current) {
+        roDetail = new ResizeObserver(() => {
+          // Detail height changed (e.g., markdown rendered) — realign bottom to list bottom
+          calculate();
+        });
+        roDetail.observe(detailRef.current);
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onVVResize);
+      window.visualViewport?.removeEventListener("scroll", onVVScroll);
+      window.removeEventListener("scroll", onScroll, true);
+      ro?.disconnect();
+      roDetail?.disconnect();
+    };
+  }, [
+    suggestions,
+    caretPos,
+    popupReady,
+    selIndex,
+    selectedDetail,
+    loadingDetail,
+    docHtmlVersion,
+    popupPos,
+  ]);
+
   /* History */
   const { inputHistory } = useHistoryStore();
+  const storeState = useHistoryStore((s) => s.history);
+  const historyRef = useRef(storeState);
+  useEffect(() => {
+    historyRef.current = storeState;
+  }, [storeState]);
   const prevInputHistoryIndexRef = useRef(inputHistoryIndex);
 
   useEffect(() => {
@@ -116,6 +411,193 @@ const InputArea: React.FC<InputAreaProps> = ({
   /* Settings */
   const settings = useSettingsStore();
 
+  /* Completions */
+  useEffect(() => {
+    if (settings.editor.intellisense) void completionService.init();
+  }, [settings.editor.intellisense]);
+
+  // Compute success snippets (simplified: input followed by no error until next input)
+  const computeSuccessSnippets = useCallback((): string[] => {
+    const hx = historyRef.current as unknown as (
+      | { type: "input"; value: string }
+      | { type: "output"; variant?: "info" | "warn" | "error"; value: string }
+      | { type: "error"; value: string }
+      | { type: "recovered-mark" }
+    )[];
+    const res: string[] = [];
+    let pending: string | null = null;
+    for (const e of hx) {
+      if (e.type === "input") {
+        if (pending) res.push(pending);
+        pending = e.value;
+      } else if (e.type === "error") {
+        pending = null;
+      } else if (e.type === "output") {
+        if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
+      }
+    }
+    if (pending) res.push(pending);
+    return res;
+  }, []);
+
+  useEffect(() => {
+    if (!settings.editor.intellisense) return;
+    const snippets = computeSuccessSnippets();
+    void completionService.updateHistory(snippets);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useHistoryStore().history, settings.editor.intellisense]);
+
+  const requestCompletions = useCallback(
+    async (code: string, pos: number) => {
+      if (!settings.editor.intellisense) return;
+      await completionService.init();
+      const seq = ++completionSeqRef.current;
+      const { items } = await completionService.getCompletions(code, pos);
+      // Ignore stale results if a newer request has started
+      if (seq !== completionSeqRef.current) return;
+      setSuggestions(items);
+      setSelIndex(0);
+      setSelectedDetail(null);
+      setLoadingDetail(false);
+      updateCaretPosition();
+    },
+    [updateCaretPosition, settings.editor.intellisense],
+  );
+
+  // Apply selected completion using TS-provided replacement span when available
+  const applySuggestion = useCallback(
+    (
+      s:
+        | {
+            label: string;
+            insertText?: string;
+            detail?: string;
+            replacement?: { start: number; length: number } | null;
+          }
+        | undefined,
+      el?: HTMLTextAreaElement,
+    ) => {
+      if (!s) return;
+      const textarea = el ?? inputAreaRef.current;
+      if (!textarea) return;
+      const base = textarea.value;
+      const text = s.insertText ?? s.label;
+      // Use replacement span if provided; otherwise fall back to current selection
+      const rep = s.replacement;
+      const start = rep ? rep.start : textarea.selectionStart;
+      const end = rep ? rep.start + rep.length : textarea.selectionEnd;
+      const newValue = base.slice(0, start) + text + base.slice(end);
+      setInput(newValue);
+      updateRows(newValue);
+      setSuggestions(null);
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + text.length;
+        updateCaretPosition();
+      });
+    },
+    [setInput, updateRows, updateCaretPosition],
+  );
+
+  // Debounced scheduler to coalesce rapid triggers and reduce jitter
+  const debounceTimerRef = useRef<number | null>(null);
+  const detailDebounceRef = useRef<number | null>(null);
+  const detailSeqRef = useRef(0);
+
+  // Lazy fetch detail/docs for the selected item
+  useEffect(() => {
+    if (!suggestions || suggestions.length === 0) return;
+    if (!inputAreaRef.current) return;
+    const idx = Math.max(0, Math.min(selIndex, suggestions.length - 1));
+    const item = suggestions[idx];
+    if (!item) return;
+    if (detailDebounceRef.current) {
+      window.clearTimeout(detailDebounceRef.current);
+      detailDebounceRef.current = null;
+    }
+    const key = `${item.source ?? ""}|${item.label}`;
+    const cached = detailCacheRef.current.get(key);
+    if (cached) {
+      setSelectedDetail(cached);
+      setLoadingDetail(false);
+      // Ensure rendered HTML is prepared asynchronously if missing
+      const doc = cached.documentation;
+      if (doc && !docHtmlCacheRef.current.has(key)) {
+        scheduleIdle(() => {
+          try {
+            const html = (md.parse(doc) as string) || "";
+            docHtmlCacheRef.current.set(key, html);
+            setDocHtmlVersion((v) => v + 1);
+          } catch (e) {
+            // Ignore rendering errors
+          }
+        });
+      }
+      return;
+    }
+    const code = inputAreaRef.current.value;
+    const cursor = inputAreaRef.current.selectionStart;
+    const token = ++detailSeqRef.current;
+    setLoadingDetail(true);
+    detailDebounceRef.current = window.setTimeout(() => {
+      void completionService
+        .getDetail(code, cursor, { name: item.label, source: item.source })
+        .then((d) => {
+          if (token !== detailSeqRef.current) return; // stale
+          // Cache result (cap size)
+          detailCacheRef.current.set(key, d);
+          if (detailCacheRef.current.size > MAX_DETAIL_CACHE) {
+            const it = detailCacheRef.current.keys().next();
+            if (!it.done) detailCacheRef.current.delete(it.value);
+          }
+          setSelectedDetail(d);
+          // Pre-render documentation HTML off the hot path
+          const doc = d.documentation;
+          if (doc) {
+            scheduleIdle(() => {
+              try {
+                const html = (md.parse(doc) as string) || "";
+                docHtmlCacheRef.current.set(key, html);
+                setDocHtmlVersion((v) => v + 1);
+              } catch (e) {
+                // Ignore rendering errors
+              }
+            });
+          }
+        })
+        .finally(() => {
+          if (token === detailSeqRef.current) setLoadingDetail(false);
+        });
+    }, 120);
+  }, [suggestions, selIndex, md, scheduleIdle]);
+
+  // Current selected item's cache key (for doc HTML lookup)
+  const currentDetailKey = useMemo(() => {
+    const len = suggestions?.length ?? 0;
+    if (!len) return null;
+    const idx = Math.max(0, Math.min(selIndex, len - 1));
+    const item = suggestions?.[idx];
+    return item ? `${item.source ?? ""}|${item.label}` : null;
+  }, [suggestions, selIndex]);
+
+  // Variant that reads fresh code/pos at execution time and skips if a newer key event occurred
+  const scheduleCompletionsFromEl = useCallback(
+    (el: HTMLTextAreaElement, delay = 50) => {
+      const token = keySeqRef.current;
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      debounceTimerRef.current = window.setTimeout(() => {
+        if (token !== keySeqRef.current) return; // stale scheduled task
+        if (!settings.editor.intellisense) return;
+        const pos = el.selectionStart;
+        const code = el.value;
+        void requestCompletions(code, pos);
+      }, delay);
+    },
+    [requestCompletions, settings.editor.intellisense],
+  );
+
   /* Expose methods */
   useImperativeHandle(
     ref,
@@ -141,6 +623,11 @@ const InputArea: React.FC<InputAreaProps> = ({
       : `Press Enter to execute, ${modifierKey}+Enter for new line, ↑↓ to browse history`;
   }, [isExecuting]);
 
+  // If user disables intellisense while suggestions are visible, hide them
+  useEffect(() => {
+    if (!settings.editor.intellisense) setSuggestions(null);
+  }, [settings.editor.intellisense]);
+
   return (
     <div className="max-h-[66vh] overflow-y-auto border-t border-[#3d2530] bg-[#1a1520]/50 p-4 backdrop-blur-sm">
       <div className="flex items-start rounded-lg bg-[#1a1520]/70 p-2">
@@ -165,7 +652,7 @@ const InputArea: React.FC<InputAreaProps> = ({
           <pre
             ref={measureRef}
             className={clsx(
-              "pointer-events-none invisible absolute -left-full w-full font-mono break-all whitespace-pre-wrap",
+              "pointer-events-none invisible absolute -left-full z-0 w-full font-mono break-all whitespace-pre-wrap",
               settings.appearance.fontSize === "sm" &&
                 "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
               settings.appearance.fontSize === "md" &&
@@ -179,7 +666,160 @@ const InputArea: React.FC<InputAreaProps> = ({
             ref={inputAreaRef}
             value={input}
             disabled={isLoading}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              composingRef.current = false;
+              // After committing composition, trigger completions immediately
+              if (!settings.editor.intellisense) return;
+              const el = e.currentTarget as HTMLTextAreaElement;
+              // Allow :type / :check expression completions; suppress other commands or when in command prefix
+              const pos = el.selectionStart;
+              const tf = transformForTypeMode(el.value, pos);
+              const ck = getCheckExprStart(el.value, pos);
+              if (isReplCommand(el.value) && !tf && ck === null) return;
+              updateCaretPosition();
+              if (el.selectionStart === el.selectionEnd) {
+                dotFastRef.current = false;
+                scheduleCompletionsFromEl(el, 0);
+              }
+            }}
             onKeyDown={(e) => {
+              // Handle completion popup interactions first
+              if (suggestions?.length) {
+                const ensureRowVisible = (index: number) => {
+                  const list = suggestionsRef.current?.querySelector(
+                    '[data-list="1"]',
+                  ) as HTMLElement | null;
+                  if (!list) return;
+                  // No need to adjust when there's no overflow
+                  if (list.scrollHeight <= list.clientHeight) return;
+                  const metrics = lastPopupMetricsRef.current;
+                  const rem =
+                    typeof document !== "undefined" ?
+                      parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+                    : 16;
+                  const rowH = metrics?.rowHeight ?? Math.round(2 * rem);
+                  if (rowH <= 0) return;
+                  const firstVisible = Math.floor(list.scrollTop / rowH);
+                  const visibleRows = Math.max(1, Math.floor(list.clientHeight / rowH));
+                  const lastVisible = firstVisible + visibleRows - 1;
+                  // Only adjust when crossing the boundary, and scroll by exactly one row
+                  if (index > lastVisible) {
+                    const base = Math.round(list.scrollTop / rowH) * rowH;
+                    list.scrollTop = Math.min(list.scrollHeight - list.clientHeight, base + rowH);
+                  } else if (index < firstVisible) {
+                    const base = Math.round(list.scrollTop / rowH) * rowH;
+                    list.scrollTop = Math.max(0, base - rowH);
+                  }
+                };
+                if (e.key === "Backspace") {
+                  // After the deletion occurs, decide whether to keep and refresh suggestions
+                  const el = e.currentTarget;
+                  setTimeout(() => {
+                    if (el.selectionStart !== el.selectionEnd) {
+                      // If there's a selection, hide popup and skip
+                      setSuggestions(null);
+                      return;
+                    }
+                    if (!settings.editor.intellisense) {
+                      setSuggestions(null);
+                      return;
+                    }
+                    const pos = el.selectionStart;
+                    const val = el.value;
+                    void completionService.analyzeTrigger(val, pos).then((action) => {
+                      if (action.kind === "close") {
+                        setSuggestions(null);
+                        return;
+                      }
+                      if (action.kind === "open" || action.kind === "refresh") {
+                        if (el.selectionStart !== el.selectionEnd) return;
+                        updateCaretPosition();
+                        scheduleCompletionsFromEl(el, action.delay ?? 35);
+                      }
+                    });
+                  }, 0);
+                  // Do not prevent default; allow deletion
+                }
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  const len = suggestions.length;
+                  const prev = selIndex;
+                  const next = (prev + 1 + len) % len;
+                  // handle wrap-around to first
+                  if (prev === len - 1 && next === 0) {
+                    const list = suggestionsRef.current?.querySelector(
+                      '[data-list="1"]',
+                    ) as HTMLElement | null;
+                    if (list) list.scrollTop = 0;
+                  } else {
+                    ensureRowVisible(next);
+                  }
+                  setSelIndex(next);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  const len = suggestions.length;
+                  const prev = selIndex;
+                  const next = (prev - 1 + len) % len;
+                  // handle wrap-around to last
+                  if (prev === 0 && next === len - 1) {
+                    const list = suggestionsRef.current?.querySelector(
+                      '[data-list="1"]',
+                    ) as HTMLElement | null;
+                    if (list) list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+                  } else {
+                    ensureRowVisible(next);
+                  }
+                  setSelIndex(next);
+                  return;
+                }
+                if (e.key === "Tab" && !e.shiftKey) {
+                  e.preventDefault();
+                  const len = suggestions.length;
+                  const prev = selIndex;
+                  const next = (prev + 1 + len) % len;
+                  if (prev === len - 1 && next === 0) {
+                    const list = suggestionsRef.current?.querySelector(
+                      '[data-list="1"]',
+                    ) as HTMLElement | null;
+                    if (list) list.scrollTop = 0;
+                  } else {
+                    ensureRowVisible(next);
+                  }
+                  setSelIndex(next);
+                  return;
+                }
+                if (e.key === "Tab" && e.shiftKey) {
+                  e.preventDefault();
+                  const len = suggestions.length;
+                  const prev = selIndex;
+                  const next = (prev - 1 + len) % len;
+                  if (prev === 0 && next === len - 1) {
+                    const list = suggestionsRef.current?.querySelector(
+                      '[data-list="1"]',
+                    ) as HTMLElement | null;
+                    if (list) list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+                  } else {
+                    ensureRowVisible(next);
+                  }
+                  setSelIndex(next);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  setSuggestions(null);
+                  return;
+                }
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applySuggestion(suggestions[selIndex], e.currentTarget);
+                  return;
+                }
+              }
+
               if (isExecuting) {
                 if (e.ctrlKey && e.key === "c") {
                   e.preventDefault();
@@ -229,16 +869,106 @@ const InputArea: React.FC<InputAreaProps> = ({
                   );
                   e.preventDefault();
                 }
+              } else if ((isMacOS() ? e.metaKey : e.ctrlKey) && e.key === " ") {
+                // Trigger completion on Ctrl/Cmd+Space (no value change here)
+                if (!settings.editor.intellisense) {
+                  setSuggestions(null);
+                  return;
+                }
+                const el = e.currentTarget;
+                updateCaretPosition();
+                if (el.selectionStart === el.selectionEnd) {
+                  scheduleCompletionsFromEl(el, 0);
+                } else {
+                  setSuggestions(null);
+                }
               }
             }}
+            onKeyUp={() => {
+              updateCaretPosition();
+            }}
+            onClick={() => {
+              updateCaretPosition();
+            }}
+            onSelect={(e) => {
+              // Hide popup when user has a non-collapsed selection
+              const el = e.currentTarget as HTMLTextAreaElement;
+              updateCaretPosition();
+              if (el.selectionStart !== el.selectionEnd) setSuggestions(null);
+            }}
             onInput={(e) => {
+              keySeqRef.current++;
               if (isExecuting) return;
-              const newValue = (e.target as HTMLTextAreaElement).value;
+              const el = e.target as HTMLTextAreaElement;
+              // Suppress intellisense triggers for non-typing or non-character changes
+              // See UI Events spec inputType list: https://w3c.github.io/input-events/#interface-InputEvent-Attributes
+              const inputEvent = e.nativeEvent as unknown as { inputType?: string };
+              const it = inputEvent.inputType ?? "";
+              const nonTyping =
+                // Pasting / dragging / yank buffer
+                it === "insertFromPaste" ||
+                it === "insertFromPasteAsQuotation" ||
+                it === "insertFromDrop" ||
+                it === "insertFromYank" ||
+                // Auto replacements (spell check / suggestions)
+                it === "insertReplacementText" ||
+                // Newline/paragraph inserts shouldn't pop completions
+                it === "insertLineBreak" ||
+                it === "insertParagraph" ||
+                // Transpose (editor command)
+                it === "insertTranspose" ||
+                // History actions
+                it === "historyUndo" ||
+                it === "historyRedo";
+              // For such events, update UI state but do not trigger completion/signature
+              const newValue = el.value;
               setInput(newValue);
               updateRows(newValue);
+              updateCaretPosition();
+              if (nonTyping) {
+                setSuggestions(null);
+                setCallDetail(null);
+                return;
+              }
+              // During IME composition (mobile/CJK), allow showing completions as user types
+              // We treat composition text as regular typing here to keep suggestions responsive.
+              if (composingRef.current && settings.editor.intellisense) {
+                const pos = el.selectionStart;
+                const tf = transformForTypeMode(newValue, pos);
+                const ck = getCheckExprStart(newValue, pos);
+                if (!(isReplCommand(newValue) && !tf && ck === null)) {
+                  const reqCode = tf ? tf.code : newValue;
+                  const reqPos = tf ? tf.pos : pos;
+                  void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
+                    if (action.kind === "open" || action.kind === "refresh") {
+                      if (el.selectionStart !== el.selectionEnd) return;
+                      dotFastRef.current = false;
+                      scheduleCompletionsFromEl(el, action.delay ?? 35);
+                    }
+                  });
+                }
+              }
+              if (!settings.editor.intellisense) {
+                setSuggestions(null);
+                return;
+              }
+              const pos = el.selectionStart;
+              void completionService.analyzeTrigger(newValue, pos).then((action) => {
+                if (action.kind === "close") {
+                  setSuggestions(null);
+                  return;
+                }
+                if (action.kind === "open" || action.kind === "refresh") {
+                  if (el.selectionStart !== el.selectionEnd) {
+                    setSuggestions(null);
+                    return;
+                  }
+                  scheduleCompletionsFromEl(el, action.delay ?? 35);
+                }
+              });
             }}
             className={clsx(
-              "w-full resize-none appearance-none bg-transparent font-mono break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none",
+              "order-0 w-full resize-none appearance-none bg-transparent p-0 font-mono tracking-normal break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none",
               settings.appearance.fontSize === "sm" &&
                 "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
               settings.appearance.fontSize === "md" &&
@@ -246,14 +976,29 @@ const InputArea: React.FC<InputAreaProps> = ({
               settings.appearance.fontSize === "lg" &&
                 "text-base leading-6 sm:leading-7 md:text-lg 2xl:text-xl",
             )}
-            style={{ WebkitTextFillColor: "transparent" }}
+            style={{ WebkitTextFillColor: "transparent", fontVariantLigatures: "none" }}
             placeholder={getPlaceholder()}
             rows={rows}
             spellCheck={false}
           />
+          {/* Hidden mirror for caret measurement */}
+          <pre
+            ref={caretMeasureRef}
+            aria-hidden
+            className={clsx(
+              "pointer-events-none invisible absolute top-0 left-0 z-0 w-full p-0 font-mono tracking-normal break-all whitespace-pre-wrap",
+              settings.appearance.fontSize === "sm" &&
+                "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
+              settings.appearance.fontSize === "md" &&
+                "text-sm leading-6 sm:leading-7 md:text-base 2xl:text-lg",
+              settings.appearance.fontSize === "lg" &&
+                "text-base leading-6 sm:leading-7 md:text-lg 2xl:text-xl",
+            )}
+            style={{ fontVariantLigatures: "none" }}
+          />
           <pre
             className={clsx(
-              "pointer-events-none absolute top-0 left-0 w-full font-mono break-all whitespace-pre-wrap text-gray-100",
+              "pointer-events-none absolute top-0 left-0 z-0 w-full p-0 font-mono tracking-normal break-all whitespace-pre-wrap text-gray-100",
               settings.appearance.fontSize === "sm" &&
                 "2xl:text-md text-xs leading-5 sm:leading-6 md:text-sm",
               settings.appearance.fontSize === "md" &&
@@ -270,8 +1015,99 @@ const InputArea: React.FC<InputAreaProps> = ({
                     : input
                   : `<span class="text-[#6c7086]">${getPlaceholder()}</span>`,
               }}
+              style={{ fontVariantLigatures: "none" }}
             />
           </pre>
+          {/* Suggestions popup near caret */}
+          {suggestions &&
+            suggestions.length > 0 &&
+            caretPos &&
+            createPortal(
+              <CompletionPopup
+                containerRef={suggestionsRef}
+                items={suggestions}
+                maxVisibleRows={6}
+                onMeasured={(m) => {
+                  lastPopupMetricsRef.current = m;
+                }}
+                selectedIndex={selIndex}
+                onSelectIndex={(i) => setSelIndex(i)}
+                onPick={(i) => {
+                  applySuggestion(suggestions[i], inputAreaRef.current ?? undefined);
+                }}
+                style={{
+                  left: (popupPos ?? caretPos).left,
+                  top: (popupPos ?? { left: 0, top: caretPos.top - POPUP_GAP_ABOVE }).top,
+                  visibility: popupReady ? "visible" : "hidden",
+                  pointerEvents: popupReady ? "auto" : "none",
+                }}
+              />,
+              document.body,
+            )}
+
+          {/* Independent right detail pane, bottom-aligned to list */}
+          {suggestions &&
+            suggestions.length > 0 &&
+            caretPos &&
+            showDetailPane &&
+            createPortal(
+              <div
+                ref={detailRef}
+                className={clsx(
+                  "fixed z-40 w-[40rem] rounded-md border border-gray-700/60 bg-[#1a1520]/80 py-3 pr-1 pl-3 text-sm text-gray-200 shadow-xl backdrop-blur-sm",
+                )}
+                style={{
+                  left: (detailPos ?? { left: (popupPos ?? caretPos).left, top: 0 }).left,
+                  top: (detailPos ?? { left: 0, top: (popupPos ?? caretPos).top }).top,
+                  maxWidth: detailMaxWidth ?? undefined,
+                  visibility: popupReady ? "visible" : "hidden",
+                  pointerEvents: popupReady ? "auto" : "none",
+                }}>
+                {loadingDetail ?
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <Icon icon="svg-spinners:3-dots-fade" className="h-4 w-4" />
+                    <span>Loading details…</span>
+                  </div>
+                : selectedDetail && (selectedDetail.detail || selectedDetail.documentation) ?
+                  <div className="repl-scroll max-h-[50vh] overflow-auto text-gray-200">
+                    {/* Scoped override to remove hljs background across the detail area */}
+                    <style>
+                      {'[data-docs="1"] .hljs,\n' +
+                        '[data-docs="1"] pre,\n' +
+                        '[data-docs="1"] pre code,\n' +
+                        '[data-docs="1"] code.hljs {\n' +
+                        "  background: transparent !important;\n" +
+                        "  background-color: transparent !important;\n" +
+                        "}\n"}
+                    </style>
+                    <div data-docs="1">
+                      {selectedDetail.detail && (
+                        <div
+                          className="mb-2 font-mono text-xs break-words text-gray-300"
+                          title={selectedDetail.detail}>
+                          <span
+                            className="hljs language-typescript"
+                            dangerouslySetInnerHTML={{
+                              __html: highlightCode(selectedDetail.detail),
+                            }}
+                          />
+                        </div>
+                      )}
+                      {selectedDetail.documentation && (
+                        <div
+                          className="leading-6"
+                          // Render pre-parsed JSDoc HTML if available
+                          dangerouslySetInnerHTML={{
+                            __html: docHtmlCacheRef.current.get(currentDetailKey ?? "") ?? "",
+                          }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                : <div className="text-gray-400">No details available</div>}
+              </div>,
+              document.body,
+            )}
         </div>
       </div>
     </div>
