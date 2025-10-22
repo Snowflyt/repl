@@ -78,6 +78,12 @@ export class CompletionService {
     });
   }
 
+  async getCheckType(expr: string): Promise<{ type: string }> {
+    await this.init();
+    const res = await this.#call("checkOf", { expr });
+    return res as { type: string };
+  }
+
   async getTypeOf(expr: string): Promise<{ type: string }> {
     await this.init();
     const res = await this.#call("typeOf", { expr });

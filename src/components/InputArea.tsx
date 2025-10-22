@@ -131,6 +131,15 @@ const InputArea: React.FC<InputAreaProps> = ({
     [],
   );
 
+  // Detect ':check' / ':c' command context and return the expression start when the cursor is past the prefix
+  const getCheckExprStart = useCallback((value: string, cursor: number): number | null => {
+    const m = /^\s*:(?:check|c)\s+/.exec(value);
+    if (!m) return null;
+    const exprStart = m[0].length;
+    if (cursor <= exprStart) return null; // no completions in command prefix
+    return exprStart;
+  }, []);
+
   const inputAreaRef = useRef<HTMLTextAreaElement>(null);
   const caretMeasureRef = useRef<HTMLPreElement>(null);
   const [caretPos, setCaretPos] = useState<{ left: number; top: number } | null>(null);
@@ -448,6 +457,33 @@ const InputArea: React.FC<InputAreaProps> = ({
       const raw = customInput ?? input;
       const trimmed = raw.trimStart();
 
+      // Handle :check / :c command (print the value type of an expression)
+      if (trimmed.startsWith(":check ") || trimmed.startsWith(":c ")) {
+        const expr = trimmed.startsWith(":check ") ? trimmed.slice(7) : trimmed.slice(3);
+        await completionService.init();
+        // Update worker history for accurate types
+        const snippets: string[] = [];
+        let pending: string | null = null;
+        for (const e of historyRef.current) {
+          if (e.type === "input") {
+            if (pending) snippets.push(pending);
+            pending = isReplCommand(e.value) ? null : e.value;
+          } else if (e.type === "error") {
+            pending = null;
+          } else if (e.type === "output") {
+            if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
+          }
+        }
+        if (pending) snippets.push(pending);
+        await completionService.updateHistory(snippets);
+        const { type } = await completionService.getCheckType(expr);
+        historyStore.appendInput(raw);
+        const pretty = normalizeTypeIndent(type);
+        historyStore.appendOutput(pretty);
+        resetInput();
+        return;
+      }
+
       // Handle :type / :t command (print the static type of an expression)
       if (trimmed.startsWith(":type ") || trimmed.startsWith(":t ")) {
         // Extract the expression following the command and a space
@@ -532,10 +568,11 @@ const InputArea: React.FC<InputAreaProps> = ({
     async (code: string, pos: number) => {
       if (!settings.editor.intellisense) return;
 
-      // Allow completions in :type mode (cursor past the command prefix),
-      // but suppress for other REPL commands or when cursor is within the command prefix.
+      // Allow completions in :type / :check mode (cursor past the command prefix),
+      // but suppress for other REPL commands or when within the command prefix.
       const transformed = transformForTypeMode(code, pos);
-      if (isReplCommand(code) && !transformed) {
+      const checkStart = getCheckExprStart(code, pos);
+      if (isReplCommand(code) && !transformed && checkStart === null) {
         setSuggestions(null);
         return;
       }
@@ -567,7 +604,7 @@ const InputArea: React.FC<InputAreaProps> = ({
       setLoadingDetail(false);
       updateCaretPosition();
     },
-    [updateCaretPosition, settings.editor.intellisense, transformForTypeMode],
+    [updateCaretPosition, settings.editor.intellisense, transformForTypeMode, getCheckExprStart],
   );
 
   // Apply selected completion using TS-provided replacement span when available
@@ -827,11 +864,12 @@ const InputArea: React.FC<InputAreaProps> = ({
                   // After the deletion occurs, decide whether to keep and refresh suggestions
                   const el = e.currentTarget;
                   setTimeout(() => {
-                    // For commands, only suppress when not in :type expression context
+                    // For commands, only suppress when not in :check or :type expression context
                     const pos = el.selectionStart;
                     const val = el.value;
                     const tf = transformForTypeMode(val, pos);
-                    if (isReplCommand(val) && !tf) {
+                    const ck = getCheckExprStart(val, pos);
+                    if (isReplCommand(val) && !tf && ck === null) {
                       setSuggestions(null);
                       return;
                     }
@@ -993,11 +1031,12 @@ const InputArea: React.FC<InputAreaProps> = ({
                   return;
                 }
                 const el = e.currentTarget;
-                // Allow :type expression completions; suppress other commands or when in command prefix
+                // Allow :type or :check expression completions; suppress other commands or when in command prefix
                 {
                   const pos = el.selectionStart;
                   const tf = transformForTypeMode(el.value, pos);
-                  if (isReplCommand(el.value) && !tf) {
+                  const ck = getCheckExprStart(el.value, pos);
+                  if (isReplCommand(el.value) && !tf && ck === null) {
                     setSuggestions(null);
                     return;
                   }
@@ -1078,10 +1117,11 @@ const InputArea: React.FC<InputAreaProps> = ({
                 setSuggestions(null);
                 return;
               }
-              // Allow :type expression completions; suppress for other commands or when in command prefix
+              // Allow :check or :type expression completions; suppress for other commands or when in command prefix
               const pos = el.selectionStart;
               const tf = transformForTypeMode(newValue, pos);
-              if (isReplCommand(newValue) && !tf) {
+              const ck = getCheckExprStart(newValue, pos);
+              if (isReplCommand(newValue) && !tf && ck === null) {
                 setSuggestions(null);
                 return;
               }

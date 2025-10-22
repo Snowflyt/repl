@@ -16,6 +16,9 @@
 - **Shareable** links to your REPL, with history encoded in the URL.
 - **Top-level `await`** is supported, and can be cancelled using <kbd>Ctrl</kbd> + <kbd>C</kbd>.
 - Conveniently **copy** and **jump to previous inputs** using the buttons on the right side of the input field, and easily **navigate through your history** with the <kbd>↑</kbd> and <kbd>↓</kbd> keys.
+- **REPL commands** for extra functionality:
+  - `:check <code>` or `:c <code>` to get the type of an expression without executing it.
+  - `:type <TypeExpr>` or `:t <TypeExpr>` to get the evaluated type of a TypeScript type expression.
 - **Clear history** with `clear()` or `console.clear()`.
 - Full support for the **`console` API**, including methods like `console.dir()`, `console.group()`, `console.table()`, `console.time()`, etc.
 - **Responsive** layout, optimized for mobile devices.
