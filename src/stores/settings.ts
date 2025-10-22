@@ -7,6 +7,7 @@ const settingsStore = create({
   },
   editor: {
     syntaxHighlighting: true,
+    intellisense: true,
   },
   history: {
     persistInURL: true,
