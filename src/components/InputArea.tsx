@@ -19,6 +19,7 @@ import { useSettingsStore } from "../stores/settings";
 import { createMarkedRenderer, highlightCode } from "../utils/highlight";
 import { isMacOS } from "../utils/platform";
 
+import CompletionDetailPane from "./CompletionDetailPane";
 import CompletionPopup from "./CompletionPopup";
 
 export interface InputAreaProps {
@@ -1225,61 +1226,19 @@ const InputArea: React.FC<InputAreaProps> = ({
             caretPos &&
             showDetailPane &&
             createPortal(
-              <div
+              <CompletionDetailPane
                 ref={detailRef}
-                className={clsx(
-                  "fixed z-40 w-[40rem] rounded-md border border-gray-700/60 bg-[#1a1520]/80 py-3 pr-1 pl-3 text-sm text-gray-200 shadow-xl backdrop-blur-sm",
-                )}
+                loading={loadingDetail}
+                detail={selectedDetail}
+                docHtml={docHtmlCacheRef.current.get(currentDetailKey ?? "") ?? ""}
                 style={{
                   left: (detailPos ?? { left: (popupPos ?? caretPos).left, top: 0 }).left,
                   top: (detailPos ?? { left: 0, top: (popupPos ?? caretPos).top }).top,
                   maxWidth: detailMaxWidth ?? undefined,
                   visibility: popupReady ? "visible" : "hidden",
                   pointerEvents: popupReady ? "auto" : "none",
-                }}>
-                {loadingDetail ?
-                  <div className="flex items-center gap-2 text-gray-400">
-                    <Icon icon="svg-spinners:3-dots-fade" className="h-4 w-4" />
-                    <span>Loading details…</span>
-                  </div>
-                : selectedDetail && (selectedDetail.detail || selectedDetail.documentation) ?
-                  <div className="repl-scroll max-h-[50vh] overflow-auto text-gray-200">
-                    {/* Scoped override to remove hljs background across the detail area */}
-                    <style>
-                      {'[data-docs="1"] .hljs,\n' +
-                        '[data-docs="1"] pre,\n' +
-                        '[data-docs="1"] pre code,\n' +
-                        '[data-docs="1"] code.hljs {\n' +
-                        "  background: transparent !important;\n" +
-                        "  background-color: transparent !important;\n" +
-                        "}\n"}
-                    </style>
-                    <div data-docs="1">
-                      {selectedDetail.detail && (
-                        <div
-                          className="mb-2 font-mono text-xs break-words text-gray-300"
-                          title={selectedDetail.detail}>
-                          <span
-                            className="hljs language-typescript"
-                            dangerouslySetInnerHTML={{
-                              __html: highlightCode(selectedDetail.detail),
-                            }}
-                          />
-                        </div>
-                      )}
-                      {selectedDetail.documentation && (
-                        <div
-                          className="leading-6"
-                          // Render pre-parsed JSDoc HTML if available
-                          dangerouslySetInnerHTML={{
-                            __html: docHtmlCacheRef.current.get(currentDetailKey ?? "") ?? "",
-                          }}
-                        />
-                      )}
-                    </div>
-                  </div>
-                : <div className="text-gray-400">No details available</div>}
-              </div>,
+                }}
+              />,
               document.body,
             )}
         </div>
