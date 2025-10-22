@@ -78,6 +78,12 @@ export class CompletionService {
     });
   }
 
+  async getTypeOf(expr: string): Promise<{ type: string }> {
+    await this.init();
+    const res = await this.#call("typeOf", { expr });
+    return res as { type: string };
+  }
+
   #call<T = unknown>(type: string, payload: unknown): Promise<T> {
     return new Promise((resolve, reject) => {
       const id = crypto.randomUUID();

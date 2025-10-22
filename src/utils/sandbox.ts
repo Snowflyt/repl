@@ -4,6 +4,15 @@ import * as ts from "typescript";
 
 const AsyncFunction = async function () {}.constructor as FunctionConstructor;
 
+/**
+ * Returns true if the given input string is a REPL command (starts with ':' after optional spaces).
+ * @param input - The user input string.
+ * @returns Whether the input is a REPL command.
+ */
+export function isReplCommand(input: string): boolean {
+  return /^\s*:/.test(input);
+}
+
 export type ConsoleListener = <Type extends Exclude<keyof Console, "Console">>(
   type: Type,
   ...args: Parameters<Console[Type]>

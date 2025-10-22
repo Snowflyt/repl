@@ -295,6 +295,7 @@ const ButtonGroup = React.memo<{
   const [copied, setCopied] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const isTouchDevice = useIsTouchDevice();
+  const isTypeCommand = /^\s*:(?:type|t)\s+/.test(input);
 
   // Generate unique ID for this instance
   const [menuId] = useState(() => `menu-${crypto.randomUUID()}`);
@@ -358,17 +359,18 @@ const ButtonGroup = React.memo<{
               className="size-4"
             />
           </button>
-
-          <button
-            type="button"
-            title="Rerun"
-            onClick={(e) => {
-              e.stopPropagation();
-              void inputAreaRef?.current?.rerun(input);
-            }}
-            className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
-            <Icon icon="material-symbols:replay" className="size-4" />
-          </button>
+          {!isTypeCommand && (
+            <button
+              type="button"
+              title="Rerun"
+              onClick={(e) => {
+                e.stopPropagation();
+                void inputAreaRef?.current?.rerun(input);
+              }}
+              className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200">
+              <Icon icon="material-symbols:replay" className="size-4" />
+            </button>
+          )}
         </div>
       )}
 
@@ -411,17 +413,19 @@ const ButtonGroup = React.memo<{
                 />
                 Copy
               </button>
-              <button
-                type="button"
-                className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void inputAreaRef?.current?.rerun(input);
-                  setShowMenu(false);
-                }}>
-                <Icon icon="material-symbols:replay" className="mr-2 size-3.5" />
-                Rerun
-              </button>
+              {!isTypeCommand && (
+                <button
+                  type="button"
+                  className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void inputAreaRef?.current?.rerun(input);
+                    setShowMenu(false);
+                  }}>
+                  <Icon icon="material-symbols:replay" className="mr-2 size-3.5" />
+                  Rerun
+                </button>
+              )}
               <button
                 type="button"
                 className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
