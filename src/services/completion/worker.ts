@@ -817,6 +817,83 @@ const handlers = {
     return true;
   },
 
+  async checkOf({ expr }: { expr: string }) {
+    await ensureEnv();
+    // Build a synthetic variable to evaluate a value-level expression provided by the user
+    //   const __repl_check_value___ = (<value expr>);
+    const wrapperName = "__repl_check_value___";
+    const asValue = `const ${wrapperName} = (${expr});`;
+    writeIndex(asValue);
+    ensureModuleRegistered();
+    // Trigger ATA using rewritten code for versioned packages
+    if (ataRunner) {
+      const combined = env!.sys.readFile(REPL_FILE) ?? asValue;
+      const { code: ataCode, packages } = rewriteCodeForAta(combined);
+      if (packages.length > 0) {
+        lastAtaSourceImports.splice(0, lastAtaSourceImports.length, ...packages);
+        try {
+          await ataRunner(ataCode);
+        } catch (e) {
+          console.error("[completion:ata] runner error", e);
+        }
+        if (ataInFlight)
+          try {
+            await ataInFlight;
+          } catch {
+            // ignore
+          } finally {
+            ensureModuleRegistered();
+          }
+      } else {
+        // Clear last packages to avoid stale logs when no external imports are present
+        lastAtaSourceImports.splice(0, lastAtaSourceImports.length);
+      }
+    }
+    const extractTypeText = (): string => {
+      const ls = env!.languageService;
+      const program = ls.getProgram();
+      const sf = program?.getSourceFile(REPL_FILE);
+      if (!sf) return "";
+      const checker = program!.getTypeChecker();
+      let typeText = "";
+      sf.forEachChild((node) => {
+        if (ts.isVariableStatement(node)) {
+          for (const d of node.declarationList.declarations) {
+            if (ts.isIdentifier(d.name) && d.name.text === wrapperName) {
+              try {
+                const t = checker.getTypeAtLocation(d.name);
+                typeText = applyMultilineHeuristics(
+                  checker.typeToString(
+                    t,
+                    d,
+                    ts.TypeFormatFlags.NoTruncation |
+                      ts.TypeFormatFlags.UseFullyQualifiedType |
+                      ts.TypeFormatFlags.MultilineObjectLiterals |
+                      ts.TypeFormatFlags.InTypeAlias,
+                  ),
+                );
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      });
+      return (typeText || "").trim();
+    };
+
+    try {
+      const ls = env!.languageService;
+      const program = ls.getProgram();
+      const sf = program?.getSourceFile(REPL_FILE);
+      if (!sf) return { type: "<unknown>" } as const;
+      const typeText = extractTypeText();
+      return { type: typeText || "<unknown>" } as const;
+    } catch {
+      return { type: "<unknown>" } as const;
+    }
+  },
+
   async typeOf({ expr }: { expr: string }) {
     await ensureEnv();
     // Build a synthetic type alias to evaluate a type-level expression provided by the user
@@ -1216,6 +1293,7 @@ self.onmessage = (e: MessageEvent) => {
     resolveDetail: true,
     debugGetHistory: true,
     typeOf: true,
+    checkOf: true,
   };
   if (typeof id !== "string" || typeof type !== "string" || !allowed[type]) return;
   // Execute handler synchronously and resolve promise responses
