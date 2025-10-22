@@ -103,10 +103,26 @@ const InputArea: React.FC<InputAreaProps> = ({
   const [detailMaxWidth, setDetailMaxWidth] = useState<number | null>(null);
   // Guard against out-of-order async completion results
   const completionSeqRef = useRef(0);
+  // Invalidate in-flight completion requests/results across mode changes (execute, reset, etc.)
+  const requestGenRef = useRef(0);
   // Token to detect stale scheduled callbacks across rapid key events
   const keySeqRef = useRef(0);
 
   const resetInput = useCallback(() => {
+    // Invalidate any pending completion or detail requests and hide UI
+    requestGenRef.current++;
+    if (detailDebounceRef.current) {
+      window.clearTimeout(detailDebounceRef.current);
+      detailDebounceRef.current = null;
+    }
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    setSuggestions(null);
+    setSelectedDetail(null);
+    setLoadingDetail(false);
+    // Clear input
     setInput("");
     setRows(1);
     onInputHistoryIndexChange(-1);
@@ -458,6 +474,21 @@ const InputArea: React.FC<InputAreaProps> = ({
       const raw = customInput ?? input;
       const trimmed = raw.trimStart();
 
+      // Invalidate any pending or in-flight completions to avoid stale popups after execution
+      requestGenRef.current++;
+      keySeqRef.current++;
+      if (detailDebounceRef.current) {
+        window.clearTimeout(detailDebounceRef.current);
+        detailDebounceRef.current = null;
+      }
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      setSuggestions(null);
+      setSelectedDetail(null);
+      setLoadingDetail(false);
+
       // Handle :check / :c command (print the value type of an expression)
       if (trimmed.startsWith(":check ") || trimmed.startsWith(":c ")) {
         const expr = trimmed.startsWith(":check ") ? trimmed.slice(7) : trimmed.slice(3);
@@ -578,14 +609,23 @@ const InputArea: React.FC<InputAreaProps> = ({
         return;
       }
 
+      // Capture a content-change token so we can invalidate results if the input changes
+      // after the request is sent (even if no newer completion request is issued).
+      const contentTokenAtRequest = keySeqRef.current;
+
       await completionService.init();
       // Special handling for :type mode to provide expression completions
       const reqCode = transformed ? transformed.code : code;
       const reqPos = transformed ? transformed.pos : pos;
       const seq = ++completionSeqRef.current;
+      const gen = requestGenRef.current;
       const { items } = await completionService.getCompletions(reqCode, reqPos);
       // Ignore stale results if a newer request has started
       if (seq !== completionSeqRef.current) return;
+      // Drop results if the request generation has been invalidated (e.g., user executed code)
+      if (gen !== requestGenRef.current) return;
+      // Invalidate if the editor content changed since this request was made
+      if (contentTokenAtRequest !== keySeqRef.current) return;
       // Map replacement spans back to original positions when transformed
       let mapped = items;
       if (transformed) {
@@ -681,6 +721,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     const code = inputAreaRef.current.value;
     const cursor = inputAreaRef.current.selectionStart;
     const token = ++detailSeqRef.current;
+    const gen = requestGenRef.current;
     setLoadingDetail(true);
     detailDebounceRef.current = window.setTimeout(() => {
       const tf = transformForTypeMode(code, cursor);
@@ -689,7 +730,8 @@ const InputArea: React.FC<InputAreaProps> = ({
       void completionService
         .getDetail(reqCode, reqPos, { name: item.label, source: item.source })
         .then((d) => {
-          if (token !== detailSeqRef.current) return; // stale
+          if (token !== detailSeqRef.current) return; // Stale sequence
+          if (gen !== requestGenRef.current) return; // Invalidated generation
           // Cache result (cap size)
           detailCacheRef.current.set(key, d);
           if (detailCacheRef.current.size > MAX_DETAIL_CACHE) {
@@ -712,7 +754,8 @@ const InputArea: React.FC<InputAreaProps> = ({
           }
         })
         .finally(() => {
-          if (token === detailSeqRef.current) setLoadingDetail(false);
+          if (token === detailSeqRef.current && gen === requestGenRef.current)
+            setLoadingDetail(false);
         });
     }, 120);
   }, [suggestions, selIndex, md, scheduleIdle, transformForTypeMode]);
