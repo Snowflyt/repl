@@ -1,4 +1,5 @@
 import { Icon } from "@iconify/react";
+import { clsx } from "clsx";
 import type { CSSProperties } from "react";
 import { forwardRef } from "react";
 
@@ -9,10 +10,18 @@ export interface CompletionDetailPaneProps {
   docHtml?: string;
   loading: boolean;
   style?: CSSProperties;
+  // Optional structured signature parts to allow UI-level highlighting of active parameter
+  sigParts?: {
+    prefix: string;
+    separator: string;
+    suffix: string;
+    params: string[];
+    activeIndex?: number;
+  } | null;
 }
 
 const CompletionDetailPane = forwardRef<HTMLDivElement, CompletionDetailPaneProps>(
-  function CompletionDetailPane({ detail, docHtml, loading, style }, ref) {
+  function CompletionDetailPane({ detail, docHtml, loading, sigParts, style }, ref) {
     return (
       <div
         ref={ref}
@@ -45,14 +54,59 @@ const CompletionDetailPane = forwardRef<HTMLDivElement, CompletionDetailPaneProp
                 "}\n"}
             </style>
             <div data-docs="1">
-              {detail.detail && (
+              {((sigParts && sigParts.params.length > 0) || detail.detail) && (
                 <div
                   className="mb-2 font-mono text-xs break-words text-gray-300"
-                  title={detail.detail}>
-                  <span
-                    className="hljs language-typescript"
-                    dangerouslySetInnerHTML={{ __html: highlightCode(detail.detail) }}
-                  />
+                  title={detail.detail || undefined}>
+                  {sigParts && (
+                    <>
+                      {/* Prefix */}
+                      {sigParts.prefix && (
+                        <span
+                          className="hljs language-typescript"
+                          dangerouslySetInnerHTML={{ __html: highlightCode(sigParts.prefix) }}
+                        />
+                      )}
+                      {/* Params with separators */}
+                      {sigParts.params.map((p, i) => (
+                        <span key={i} className="inline">
+                          {/* Highlight ONLY the parameter text */}
+                          <span
+                            className={clsx(
+                              i === sigParts.activeIndex &&
+                                "rounded-sm bg-amber-500/10 text-amber-200",
+                            )}>
+                            <span
+                              className="hljs language-typescript"
+                              dangerouslySetInnerHTML={{ __html: highlightCode(p) }}
+                            />
+                          </span>
+                          {/* Render the separator outside the highlighted param */}
+                          {i < sigParts.params.length - 1 && sigParts.separator && (
+                            <span
+                              className="hljs language-typescript"
+                              dangerouslySetInnerHTML={{
+                                __html: highlightCode(sigParts.separator),
+                              }}
+                            />
+                          )}
+                        </span>
+                      ))}
+                      {/* Suffix */}
+                      {sigParts.suffix && (
+                        <span
+                          className="hljs language-typescript"
+                          dangerouslySetInnerHTML={{ __html: highlightCode(sigParts.suffix) }}
+                        />
+                      )}
+                    </>
+                  )}
+                  {!sigParts && detail.detail && (
+                    <span
+                      className="hljs language-typescript"
+                      dangerouslySetInnerHTML={{ __html: highlightCode(detail.detail) }}
+                    />
+                  )}
                 </div>
               )}
               {detail.documentation && (
