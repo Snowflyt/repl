@@ -1291,7 +1291,6 @@ self.onmessage = (e: MessageEvent) => {
     updateHistory: true,
     analyzeTrigger: true,
     resolveDetail: true,
-    debugGetHistory: true,
     typeOf: true,
     checkOf: true,
   };
