@@ -808,6 +808,122 @@ function applyMultilineHeuristics(text: string): string {
   return s;
 }
 
+/**
+ * Converts JSDoc comments and tags into a markdown-formatted string suitable for display
+ * in a detail pane or tooltip.
+ * @param summary The main summary text of the JSDoc comment.
+ * @param tags An optional array of JSDoc tag information.
+ * @returns A markdown-formatted string representing the JSDoc content.
+ */
+function formatJSDocToMarkdown(summary: string, tags?: readonly ts.JSDocTagInfo[]): string {
+  const toText = (t: string | readonly ts.SymbolDisplayPart[] | undefined): string => {
+    if (!t) return "";
+    if (typeof t === "string") return t;
+    return t.map((p) => p.text).join("");
+  };
+  const stripLeadingSep = (s: string): string =>
+    (s || "")
+      .trim()
+      .replace(/^(?:[-\u2013\u2014:\u2012]\s*)+/, "")
+      .trim();
+
+  const paramItems: string[] = [];
+  const templateItems: string[] = [];
+  const throwsItems: string[] = [];
+  const otherLines: string[] = [];
+  const exampleBlocks: string[] = [];
+  const returnsLines: string[] = [];
+
+  if (tags?.length) {
+    for (const tag of tags) {
+      const name = tag.name.toLowerCase();
+      const text = toText(tag.text as any).trim();
+      if (name === "param") {
+        let paramName = "";
+        let desc = "";
+        const m = /^(\S+)\s*(?:[-\u2014\u2013:\u2012]\s*)?(.*)$/.exec(text);
+        if (m) {
+          paramName = m[1] ?? "";
+          desc = stripLeadingSep((m[2] ?? "").trim());
+        } else {
+          desc = stripLeadingSep(text);
+        }
+        const item = `- \`${paramName || "param"}\`${desc ? " - " + desc : ""}`.trim();
+        paramItems.push(item);
+        continue;
+      }
+      if (name === "returns" || name === "return") {
+        if (!text.trim()) continue;
+        const line = `**Returns**\n\n${text}`.trim();
+        returnsLines.push(line);
+        continue;
+      }
+      if (name === "template" || name === "typeparam") {
+        const brace = /^\s*\{([^}]+)\}\s*(\S+)\s*(.*)$/.exec(text);
+        if (brace) {
+          const constraint = (brace[1] ?? "").trim();
+          const tName = (brace[2] ?? "").trim();
+          const desc = stripLeadingSep((brace[3] ?? "").trim());
+          const head = tName + (constraint ? ` <: ${constraint}` : "");
+          const item = `- \`${head}\`${desc ? " - " + desc : ""}`.trim();
+          templateItems.push(item);
+          continue;
+        }
+        let tName = "";
+        let desc = "";
+        const m = /^(\S+)\s*(?:[-\u2014\u2013:\u2012]\s*)?(.*)$/.exec(text);
+        if (m) {
+          tName = m[1] ?? "";
+          desc = stripLeadingSep((m[2] ?? "").trim());
+        } else {
+          desc = stripLeadingSep(text);
+        }
+        const item = `- \`${tName || "T"}\`${desc ? " - " + desc : ""}`.trim();
+        templateItems.push(item);
+        continue;
+      }
+      if (name === "throws" || name === "exception") {
+        const m = /^(?:\{([^}]+)\}\s*)?(.*)$/.exec(text);
+        const typ = (m?.[1] ?? "").trim();
+        const desc = stripLeadingSep((m?.[2] ?? "").trim());
+        const item =
+          typ ? `- \`${typ}\`${desc ? " - " + desc : ""}` : `- ${desc || stripLeadingSep(text)}`;
+        throwsItems.push(item.trim());
+        continue;
+      }
+      if (name === "example") {
+        const code = text.trim();
+        if (code) {
+          const preFenced = /^```[A-Za-z0-9+#-]*/.test(code);
+          const block = preFenced ? code : "```ts\n" + code + "\n```";
+          exampleBlocks.push("**Example**\n\n" + block);
+        }
+        continue;
+      }
+      if (name === "deprecated") {
+        otherLines.push(`> Deprecated: ${text}`.trim());
+        continue;
+      }
+      if (name === "remarks") {
+        otherLines.push(text);
+        continue;
+      }
+      otherLines.push(`@${tag.name} ${text}`.trim());
+    }
+  }
+
+  const blocks: string[] = [];
+  if (summary) blocks.push(summary);
+  if (templateItems.length) blocks.push(["**Type Parameters**", ...templateItems].join("\n"));
+  if (paramItems.length) blocks.push(["**Parameters**", ...paramItems].join("\n"));
+  if (returnsLines.length) blocks.push(returnsLines.join("\n"));
+  if (throwsItems.length) blocks.push(["**Throws**", ...throwsItems].join("\n"));
+  if (otherLines.length) blocks.push(otherLines.join("\n\n"));
+  if (exampleBlocks.length) blocks.push(exampleBlocks.join("\n\n"));
+
+  return blocks.join("\n\n");
+}
+
 const handlers = {
   async init() {
     await ensureEnv();
@@ -1054,121 +1170,10 @@ const handlers = {
         ) ?? undefined;
       if (!det) return { detail: undefined, documentation: undefined };
       const detail = det.displayParts.map((p) => p.text).join("");
-      const toText = (t: string | readonly ts.SymbolDisplayPart[] | undefined): string => {
-        if (!t) return "";
-        if (typeof t === "string") return t;
-        return t.map((p) => p.text).join("");
-      };
-      const stripLeadingSep = (s: string): string =>
-        (s || "")
-          .trim()
-          .replace(/^(?:[-\u2013\u2014:\u2012]\s*)+/, "")
-          .trim();
       const docSummary = det.documentation?.map((p) => p.text).join("") ?? "";
-      // Convert JSDoc tags into a Markdown block so the renderer can display params/examples/etc.
-      const tags = det.tags ?? [];
-      const paramItems: string[] = [];
-      const templateItems: string[] = [];
-      const throwsItems: string[] = [];
-      const otherLines: string[] = [];
-      const exampleBlocks: string[] = [];
-      const returnsLines: string[] = [];
+      const documentation = formatJSDocToMarkdown(docSummary, det.tags ?? []);
 
-      for (const tag of tags) {
-        const name = tag.name.toLowerCase();
-        const text = toText(tag.text as any).trim();
-        if (name === "param") {
-          // Attempt to split into name and description, common shapes:
-          // "foo – description", "foo - description", or "foo description"
-          let paramName = "";
-          let desc = "";
-          const m = /^(\S+)\s*(?:[-\u2014\u2013:\u2012]\s*)?(.*)$/.exec(text);
-          if (m) {
-            paramName = m[1] ?? "";
-            desc = stripLeadingSep((m[2] ?? "").trim());
-          } else {
-            // Fallback: treat the whole text as description
-            desc = stripLeadingSep(text);
-          }
-          const item = `- \`${paramName || "param"}\`${desc ? " - " + desc : ""}`.trim();
-          paramItems.push(item);
-          continue;
-        }
-        if (name === "returns" || name === "return") {
-          if (!text.trim()) continue;
-          const line = `**Returns**\n\n${text}`.trim();
-          returnsLines.push(line);
-          continue;
-        }
-        if (name === "template" || name === "typeparam") {
-          // Support both forms:
-          // - T - description
-          // - {Constraint} T - description (rendered as `T <: Constraint`)
-          const brace = /^\s*\{([^}]+)\}\s*(\S+)\s*(.*)$/.exec(text);
-          if (brace) {
-            const constraint = (brace[1] ?? "").trim();
-            const tName = (brace[2] ?? "").trim();
-            const desc = stripLeadingSep((brace[3] ?? "").trim());
-            const head = tName + (constraint ? ` <: ${constraint}` : "");
-            const item = `- \`${head}\`${desc ? " - " + desc : ""}`.trim();
-            templateItems.push(item);
-            continue;
-          }
-          let tName = "";
-          let desc = "";
-          const m = /^(\S+)\s*(?:[-\u2014\u2013:\u2012]\s*)?(.*)$/.exec(text);
-          if (m) {
-            tName = m[1] ?? "";
-            desc = stripLeadingSep((m[2] ?? "").trim());
-          } else {
-            desc = stripLeadingSep(text);
-          }
-          const item = `- \`${tName || "T"}\`${desc ? " - " + desc : ""}`.trim();
-          templateItems.push(item);
-          continue;
-        }
-        if (name === "throws" || name === "exception") {
-          // @throws {Error} description
-          const m = /^(?:\{([^}]+)\}\s*)?(.*)$/.exec(text);
-          const typ = (m?.[1] ?? "").trim();
-          const desc = stripLeadingSep((m?.[2] ?? "").trim());
-          const item =
-            typ ? `- \`${typ}\`${desc ? " - " + desc : ""}` : `- ${desc || stripLeadingSep(text)}`;
-          throwsItems.push(item.trim());
-          continue;
-        }
-        if (name === "example") {
-          // Render examples; respect pre-fenced content, otherwise wrap as ts
-          const code = text.trim();
-          if (code) {
-            const preFenced = /^```[A-Za-z0-9+#-]*/.test(code);
-            const block = preFenced ? code : "```ts\n" + code + "\n```";
-            exampleBlocks.push("**Example**\n\n" + block);
-          }
-          continue;
-        }
-        if (name === "deprecated") {
-          otherLines.push(`> Deprecated: ${text}`.trim());
-          continue;
-        }
-        if (name === "remarks") {
-          otherLines.push(text);
-          continue;
-        }
-        // Generic fallback for unhandled tags
-        otherLines.push(`@${tag.name} ${text}`.trim());
-      }
-
-      const blocks: string[] = [];
-      if (docSummary) blocks.push(docSummary);
-      if (templateItems.length) blocks.push(["**Type Parameters**", ...templateItems].join("\n"));
-      if (paramItems.length) blocks.push(["**Parameters**", ...paramItems].join("\n"));
-      if (returnsLines.length) blocks.push(returnsLines.join("\n"));
-      if (throwsItems.length) blocks.push(["**Throws**", ...throwsItems].join("\n"));
-      if (otherLines.length) blocks.push(otherLines.join("\n\n"));
-      if (exampleBlocks.length) blocks.push(exampleBlocks.join("\n\n"));
-
-      return { detail, documentation: blocks.join("\n\n") };
+      return { detail, documentation };
     } catch (e) {
       return { detail: undefined, documentation: undefined };
     }
@@ -1269,6 +1274,42 @@ const handlers = {
     // Typing identifiers should open quickly
     return { kind: "open" as const, delay: 35 };
   },
+
+  async signatureHelp({ code, cursor }: { code: string; cursor: number }) {
+    await ensureEnv();
+    writeIndex(code);
+    ensureModuleRegistered();
+    const ls = env!.languageService;
+    const idxFile = REPL_FILE;
+    try {
+      const pos = codeBaseOffset + cursor;
+      const help = ls.getSignatureHelpItems(idxFile, pos, undefined);
+      if (!help || help.items.length === 0) return { items: [] } as const;
+      const partsToString = (parts?: readonly ts.SymbolDisplayPart[]) =>
+        parts?.map((p) => p.text).join("") ?? "";
+      const items = help.items.map((it) => {
+        const prefix = partsToString(it.prefixDisplayParts);
+        const sep = partsToString(it.separatorDisplayParts);
+        const suffix = partsToString(it.suffixDisplayParts);
+        const params = it.parameters.map((p) => partsToString(p.displayParts));
+        const signature = prefix + params.join(sep) + suffix;
+        const sigDoc = partsToString(it.documentation);
+        const documentation = formatJSDocToMarkdown(sigDoc, it.tags);
+        return {
+          signature,
+          documentation,
+          parts: { prefix, separator: sep, suffix, params },
+        };
+      });
+      return {
+        items,
+        selectedItemIndex: typeof help.selectedItemIndex === "number" ? help.selectedItemIndex : 0,
+        argumentIndex: typeof help.argumentIndex === "number" ? help.argumentIndex : 0,
+      } as const;
+    } catch {
+      return { items: [] } as const;
+    }
+  },
 };
 
 // Dedicated worker: additionally we enforce a message scope to gate handling
@@ -1293,6 +1334,7 @@ self.onmessage = (e: MessageEvent) => {
     resolveDetail: true,
     typeOf: true,
     checkOf: true,
+    signatureHelp: true,
   };
   if (typeof id !== "string" || typeof type !== "string" || !allowed[type]) return;
   // Execute handler synchronously and resolve promise responses

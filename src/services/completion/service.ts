@@ -10,6 +10,21 @@ export interface CompletionItem {
   source?: string;
 }
 
+export interface SignatureHelpResult {
+  items: {
+    signature: string;
+    documentation?: string;
+    parts?: {
+      prefix: string;
+      separator: string;
+      suffix: string;
+      params: string[];
+    };
+  }[];
+  selectedItemIndex: number;
+  argumentIndex: number;
+}
+
 export class CompletionService {
   #ready = false;
   #worker: Worker;
@@ -76,6 +91,10 @@ export class CompletionService {
       name: item.name,
       source: item.source,
     });
+  }
+
+  async getSignatureHelp(code: string, cursor: number): Promise<SignatureHelpResult> {
+    return this.#call("signatureHelp", { code, cursor });
   }
 
   async getCheckType(expr: string): Promise<{ type: string }> {

@@ -81,6 +81,19 @@ const InputArea: React.FC<InputAreaProps> = ({
     detail?: string;
     documentation?: string;
   } | null>(null);
+  // Signature help detail (shown when in a call/new expression context, without the list)
+  const [callDetail, setCallDetail] = useState<{
+    detail?: string;
+    documentation?: string;
+    sigParts?: {
+      prefix: string;
+      separator: string;
+      suffix: string;
+      params: string[];
+      activeIndex?: number;
+    };
+  } | null>(null);
+  const [loadingSig, setLoadingSig] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   // Cache for completion details to avoid flicker and redundant worker calls
   const detailCacheRef = useRef<Map<string, { detail?: string; documentation?: string }>>(
@@ -101,6 +114,9 @@ const InputArea: React.FC<InputAreaProps> = ({
   const [detailPos, setDetailPos] = useState<{ left: number; top: number } | null>(null);
   // Constrain detail pane width to available space to the right of the list
   const [detailMaxWidth, setDetailMaxWidth] = useState<number | null>(null);
+  // Signature help positioning
+  const sigRef = useRef<HTMLDivElement | null>(null);
+  const [sigPos, setSigPos] = useState<{ left: number; top: number } | null>(null);
   // Guard against out-of-order async completion results
   const completionSeqRef = useRef(0);
   // Invalidate in-flight completion requests/results across mode changes (execute, reset, etc.)
@@ -190,6 +206,9 @@ const InputArea: React.FC<InputAreaProps> = ({
       setPopupReady(false);
       setSelectedDetail(null);
       setLoadingDetail(false);
+      // Hide signature help when a suggestions session starts
+      setCallDetail(null);
+      setLoadingSig(false);
     }
     hadSuggestionsRef.current = has;
   }, [suggestions]);
@@ -437,6 +456,62 @@ const InputArea: React.FC<InputAreaProps> = ({
     docHtmlVersion,
     popupPos,
   ]);
+
+  // Position signature help near the caret, preferring above the caret once content is measured
+  useLayoutEffect(() => {
+    if (!callDetail || !caretPos) {
+      setSigPos((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const calculate = () => {
+      const padding = 8;
+      const vv = window.visualViewport;
+      const vw = Math.round(vv?.width ?? window.innerWidth);
+      const vh = Math.round(vv?.height ?? window.innerHeight);
+      const dEl = sigRef.current;
+      const rect = dEl?.getBoundingClientRect();
+      const width = Math.round(rect?.width || 640);
+      const height = Math.round(rect?.height || 200);
+      const left = Math.min(
+        Math.max(padding, caretPos.left + 2),
+        Math.max(padding, vw - padding - width),
+      );
+      // Prefer above the caret using the same gap as the completion popup
+      let top = caretPos.top - height - POPUP_GAP_ABOVE;
+      if (top < padding)
+        // Not enough space above; place below but within viewport using the same below gap
+        top = Math.min(Math.max(padding, caretPos.top + POPUP_GAP_BELOW), vh - padding - height);
+      setSigPos((prev) => {
+        const unchanged = prev ? prev.left === left && prev.top === top : false;
+        return unchanged ? prev : { left, top };
+      });
+    };
+    calculate();
+    const onResize = () => calculate();
+    const onScroll = () => calculate();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
+    const onVVResize = () => calculate();
+    const onVVScroll = () => calculate();
+    window.visualViewport?.addEventListener("resize", onVVResize);
+    window.visualViewport?.addEventListener("scroll", onVVScroll);
+    let ro: ResizeObserver | null = null;
+    try {
+      if (typeof ResizeObserver !== "undefined" && sigRef.current) {
+        ro = new ResizeObserver(() => calculate());
+        ro.observe(sigRef.current);
+      }
+    } catch {
+      // ignore
+    }
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
+      window.visualViewport?.removeEventListener("resize", onVVResize);
+      window.visualViewport?.removeEventListener("scroll", onVVScroll);
+      ro?.disconnect();
+    };
+  }, [callDetail, caretPos, loadingSig, docHtmlVersion]);
 
   /* History */
   const { inputHistory } = useHistoryStore();
@@ -816,9 +891,12 @@ const InputArea: React.FC<InputAreaProps> = ({
       : `Press Enter to execute, ${modifierKey}+Enter for new line, ↑↓ to browse history`;
   }, [isExecuting]);
 
-  // If user disables intellisense while suggestions are visible, hide them
+  // If user disables intellisense while suggestions/signature help are visible, hide them
   useEffect(() => {
-    if (!settings.editor.intellisense) setSuggestions(null);
+    if (!settings.editor.intellisense) {
+      setSuggestions(null);
+      setCallDetail(null);
+    }
   }, [settings.editor.intellisense]);
 
   return (
@@ -1111,10 +1189,13 @@ const InputArea: React.FC<InputAreaProps> = ({
               updateCaretPosition();
             }}
             onSelect={(e) => {
-              // Hide popup when user has a non-collapsed selection
+              // Hide popup/signature when user has a non-collapsed selection
               const el = e.currentTarget as HTMLTextAreaElement;
               updateCaretPosition();
-              if (el.selectionStart !== el.selectionEnd) setSuggestions(null);
+              if (el.selectionStart !== el.selectionEnd) {
+                setSuggestions(null);
+                setCallDetail(null);
+              }
             }}
             onInput={(e) => {
               keySeqRef.current++;
@@ -1179,6 +1260,7 @@ const InputArea: React.FC<InputAreaProps> = ({
               if (isReplCommand(newValue) && !tf && ck === null) {
                 setSuggestions(null);
                 dotFastRef.current = false;
+                setCallDetail(null);
                 return;
               }
               const reqCode = tf ? tf.code : newValue;
@@ -1187,17 +1269,68 @@ const InputArea: React.FC<InputAreaProps> = ({
                 if (action.kind === "close") {
                   setSuggestions(null);
                   dotFastRef.current = false;
+                  // Attempt signature help in call context when list is closed
+                  setLoadingSig(true);
+                  void completionService
+                    .getSignatureHelp(reqCode, reqPos)
+                    .then((res) => {
+                      // pick active signature if available
+                      const idx = Math.max(
+                        0,
+                        Math.min(res.items.length - 1, res.selectedItemIndex || 0),
+                      );
+                      const it = res.items[idx];
+                      if (it && (it.signature || it.documentation)) {
+                        const parts = it.parts;
+                        const sigParts =
+                          parts ?
+                            {
+                              prefix: parts.prefix,
+                              separator: parts.separator,
+                              suffix: parts.suffix,
+                              params: parts.params,
+                              activeIndex: res.argumentIndex,
+                            }
+                          : undefined;
+                        const detail = {
+                          detail: it.signature,
+                          documentation: it.documentation,
+                          sigParts,
+                        };
+                        setCallDetail(detail);
+                        // Pre-render docs HTML
+                        const key = `sig|${it.signature}`;
+                        const doc = it.documentation ?? "";
+                        if (doc && !docHtmlCacheRef.current.has(key)) {
+                          scheduleIdle(() => {
+                            try {
+                              const html = (md.parse(doc) as string) || "";
+                              docHtmlCacheRef.current.set(key, html);
+                              setDocHtmlVersion((v) => v + 1);
+                            } catch (e) {
+                              // Ignore
+                            }
+                          });
+                        }
+                      } else {
+                        setCallDetail(null);
+                      }
+                    })
+                    .finally(() => setLoadingSig(false));
                   return;
                 }
                 if (action.kind === "open" || action.kind === "refresh") {
                   if (el.selectionStart !== el.selectionEnd) {
                     setSuggestions(null);
+                    setCallDetail(null);
                     return;
                   }
                   // Fast-path: if the last typed character was a dot, reduce overscan
                   const isDot = reqPos > 0 && reqCode[reqPos - 1] === ".";
                   dotFastRef.current = isDot;
                   scheduleCompletionsFromEl(el, action.delay ?? 35);
+                  // Hide signature help while showing suggestions
+                  setCallDetail(null);
                 }
               });
             }}
@@ -1297,6 +1430,41 @@ const InputArea: React.FC<InputAreaProps> = ({
                   maxWidth: detailMaxWidth ?? undefined,
                   visibility: popupReady ? "visible" : "hidden",
                   pointerEvents: popupReady ? "auto" : "none",
+                }}
+              />,
+              document.body,
+            )}
+
+          {/* Signature help pane (no list) anchored near caret */}
+          {!suggestions &&
+            callDetail &&
+            caretPos &&
+            createPortal(
+              <CompletionDetailPane
+                ref={sigRef}
+                loading={loadingSig}
+                detail={callDetail}
+                sigParts={callDetail.sigParts ?? null}
+                docHtml={docHtmlCacheRef.current.get(
+                  callDetail.detail ? `sig|${callDetail.detail}` : "",
+                )}
+                style={{
+                  left: (
+                    sigPos ?? {
+                      left: Math.max(8, Math.min(window.innerWidth - 656, caretPos.left + 2)),
+                      top: 0,
+                    }
+                  ).left,
+                  top: (
+                    sigPos ?? {
+                      left: 0,
+                      top: Math.max(
+                        8,
+                        Math.min(window.innerHeight - 216, caretPos.top - POPUP_GAP_ABOVE),
+                      ),
+                    }
+                  ).top,
+                  visibility: "visible",
                 }}
               />,
               document.body,
