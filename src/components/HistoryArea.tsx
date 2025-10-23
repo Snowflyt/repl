@@ -218,6 +218,10 @@ const HistoryItem = React.memo<{
               const index = historyStore.$get().inputHistory.findIndex((e) => e === entry);
               return () => onJumpToInputHistory?.(index);
             })()}
+            onDelete={(() => {
+              const idx = historyStore.$get().history.indexOf(entry);
+              return () => historyStore.removeInputBlockAt(idx);
+            })()}
           />
         ),
         "{ type: 'output', variant: 'info', value: _ }": (value) => (
@@ -291,7 +295,8 @@ const ButtonGroup = React.memo<{
   input: string;
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
   onJump?: () => void;
-}>(function ButtonGroup({ input, inputAreaRef, onJump }) {
+  onDelete?: () => void;
+}>(function ButtonGroup({ input, inputAreaRef, onDelete, onJump }) {
   const [copied, setCopied] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const isTouchDevice = useIsTouchDevice();
@@ -346,6 +351,16 @@ const ButtonGroup = React.memo<{
         <div className="mr-1.5 hidden space-x-1.5 group-hover:flex">
           <button
             type="button"
+            title="Delete this entry"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete?.();
+            }}
+            className="rounded-md border border-gray-700/50 bg-black/70 p-1 text-gray-400 hover:bg-[#2a1e30] hover:text-[#ff6e6e]">
+            <Icon icon="material-symbols:close" className="size-4" />
+          </button>
+          <button
+            type="button"
             title="Copy to clipboard"
             onClick={(e) => {
               e.stopPropagation();
@@ -397,6 +412,17 @@ const ButtonGroup = React.memo<{
           {/* Touch-device dropdown menu */}
           {showMenu && (
             <div className="absolute top-8 right-0 z-10 min-w-32 rounded-md border border-gray-700/50 bg-black/90 py-0.5 shadow-lg">
+              <button
+                type="button"
+                className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete?.();
+                  setShowMenu(false);
+                }}>
+                <Icon icon="material-symbols:close" className="mr-2 size-3.5" />
+                Delete
+              </button>
               <button
                 type="button"
                 className="flex w-full items-center px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
@@ -464,7 +490,8 @@ const InputMessage = React.memo<{
   inputAreaRef?: React.RefObject<InputAreaRef | null>;
   historyAreaRef?: React.RefObject<HTMLDivElement | null>;
   onJump?: () => void;
-}>(function InputMessage({ historyAreaRef, inputAreaRef, onJump, value }) {
+  onDelete?: () => void;
+}>(function InputMessage({ historyAreaRef, inputAreaRef, onDelete, onJump, value }) {
   const [isTooCloseToTop, setIsTooCloseToTop] = useState(false);
   const messageRef = useRef<HTMLDivElement>(null);
 
@@ -524,7 +551,12 @@ const InputMessage = React.memo<{
         {/* Only render ButtonGroup if not too close to top,
             to avoid overlapping with the GitHub icon (which is always at the top right) */}
         {!isTooCloseToTop && (
-          <ButtonGroup input={value} inputAreaRef={inputAreaRef} onJump={onJump} />
+          <ButtonGroup
+            input={value}
+            inputAreaRef={inputAreaRef}
+            onJump={onJump}
+            onDelete={onDelete}
+          />
         )}
       </div>
     </div>
