@@ -47,6 +47,24 @@ const historyStore = create({
     const message = error instanceof Error ? `${error.name}: ${error.message}` : show(error);
     this.history.push({ type: "error", value: message });
   },
+
+  /**
+   * Remove an input entry and all subsequent outputs/errors up to (but not including) the next
+   * input or recovered-mark. If the index is invalid or not an input, this is a no-op.
+   */
+  removeInputBlockAt(historyIndex: number) {
+    const history = this.history;
+    if (historyIndex < 0 || historyIndex >= history.length) return;
+    const entry = history[historyIndex];
+    if (entry?.type !== "input") return;
+    let end = historyIndex + 1;
+    while (end < history.length) {
+      const e = history[end] as HistoryEntry | { type: "recovered-mark" };
+      if (e.type === "input" || e.type === "recovered-mark") break;
+      end++;
+    }
+    this.history.splice(historyIndex, end - historyIndex);
+  },
 });
 
 export default historyStore;
