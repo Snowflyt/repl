@@ -17,6 +17,7 @@ export interface CompletionPopupProps {
   containerRef?: Ref<HTMLDivElement>;
   items: CompletionItemView[];
   maxVisibleRows?: number;
+  overscan?: number;
   onMeasured?: (m: {
     rowHeight: number;
     width: number;
@@ -37,6 +38,7 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
   onMeasured,
   onPick,
   onSelectIndex,
+  overscan: propOverscan = 6,
   selectedIndex,
   style,
 }) => {
@@ -48,18 +50,20 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
 
   const visibleRows = Math.min(maxVisibleRows, items.length);
   // text-sm line-height (1.25rem) + py-1.5 vertical padding (0.75rem) = 2.0rem per row
-  const rem =
-    typeof document !== "undefined" ?
-      parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
-    : 16;
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const fallbackRowHeight = Math.round(2 * rem);
   const [measuredRowHeight, setMeasuredRowHeight] = useState<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const rafRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
-    const first = internalListRef.current?.children[0] as HTMLElement | undefined;
+    const list = internalListRef.current;
+    if (!list) return;
+    // Prefer measuring an actual row, not spacers
+    const row = list.querySelector('[data-row="1"]');
     let raf = 0;
-    if (first) {
-      const h = Math.round(first.getBoundingClientRect().height);
+    if (row) {
+      const h = Math.round((row as HTMLElement).getBoundingClientRect().height);
       if (h > 0 && h !== measuredRowHeight) {
         raf = window.requestAnimationFrame(() => setMeasuredRowHeight(h));
       }
@@ -72,7 +76,15 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
   const rowHeight = measuredRowHeight ?? fallbackRowHeight;
   const hasOverflow = items.length > visibleRows;
   const fixedHeight = hasOverflow ? rowHeight * visibleRows : rowHeight * items.length;
-  // Deprecated: scrollbar visibility is now handled on the inner list element
+
+  // Virtualization window
+  const overscan = propOverscan;
+  const startIndex = hasOverflow ? Math.max(0, Math.floor(scrollTop / rowHeight) - overscan) : 0;
+  const windowCount =
+    hasOverflow ? Math.min(items.length - startIndex, visibleRows + overscan * 2) : items.length;
+  const endIndex = startIndex + windowCount;
+  const paddingTop = startIndex * rowHeight;
+  const paddingBottom = Math.max(0, (items.length - endIndex) * rowHeight);
 
   // Inject scrollbar styles at runtime
   useLayoutEffect(() => {
@@ -183,6 +195,40 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
     return () => list.removeEventListener("wheel", onWheel);
   }, [hasOverflow, rowHeight]);
 
+  // Sync state with programmatic scroll jumps (e.g., wrap-around in parent)
+  useLayoutEffect(() => {
+    const el = internalListRef.current;
+    if (!el) return;
+    if (el.scrollTop !== scrollTop) setScrollTop(el.scrollTop);
+  }, [scrollTop]);
+
+  // Ensure selected row stays fully visible even during wrap-around or programmatic jumps
+  useLayoutEffect(() => {
+    const el = internalListRef.current;
+    if (!el || rowHeight <= 0) return;
+    const firstVisible = Math.floor(el.scrollTop / rowHeight);
+    const visibleRows = Math.max(1, Math.floor(el.clientHeight / rowHeight));
+    const lastVisible = firstVisible + visibleRows - 1;
+    if (selectedIndex > lastVisible) {
+      const target = selectedIndex * rowHeight - (visibleRows - 1) * rowHeight;
+      const clamped = Math.min(
+        el.scrollHeight - el.clientHeight,
+        Math.max(0, Math.round(target / rowHeight) * rowHeight),
+      );
+      if (el.scrollTop !== clamped) {
+        el.scrollTop = clamped;
+        setScrollTop(clamped);
+      }
+    } else if (selectedIndex < firstVisible) {
+      const target = selectedIndex * rowHeight;
+      const clamped = Math.max(0, Math.round(target / rowHeight) * rowHeight);
+      if (el.scrollTop !== clamped) {
+        el.scrollTop = clamped;
+        setScrollTop(clamped);
+      }
+    }
+  }, [selectedIndex, rowHeight, items.length]);
+
   return (
     <div
       ref={containerRef}
@@ -203,10 +249,20 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
           )}
           style={{
             height: fixedHeight,
-            scrollSnapType: "y mandatory",
             overscrollBehavior: "contain",
+          }}
+          onScroll={(e) => {
+            const el = e.currentTarget as HTMLDivElement;
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+            rafRef.current = requestAnimationFrame(() => {
+              setScrollTop(el.scrollTop);
+              rafRef.current = null;
+            });
           }}>
-          {items.map((s, i) => {
+          {/* Top spacer */}
+          {paddingTop > 0 && <div style={{ height: paddingTop }} />}
+          {items.slice(startIndex, endIndex).map((s, i0) => {
+            const i = startIndex + i0;
             const kind = (s.kind || "").toLowerCase();
             const colorClass = kindMeta.color(kind);
             const iconName = kindMeta.icon(kind);
@@ -214,11 +270,11 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
             return (
               <div
                 key={`${s.label}-${i}`}
+                data-row="1"
                 className={clsx(
                   "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-white/10",
                   i === selectedIndex && "bg-white/10",
                 )}
-                style={{ scrollSnapAlign: "start" }}
                 onMouseDown={(ev) => {
                   ev.preventDefault();
                   onPick(i);
@@ -230,6 +286,8 @@ const CompletionPopup: React.FC<CompletionPopupProps> = ({
               </div>
             );
           })}
+          {/* Bottom spacer */}
+          {paddingBottom > 0 && <div style={{ height: paddingBottom }} />}
         </div>
       </div>
     </div>

@@ -107,6 +107,8 @@ const InputArea: React.FC<InputAreaProps> = ({
   const requestGenRef = useRef(0);
   // Token to detect stale scheduled callbacks across rapid key events
   const keySeqRef = useRef(0);
+  // Fast-path hint for '.' member access to reduce overscan in the popup
+  const dotFastRef = useRef(false);
 
   const resetInput = useCallback(() => {
     // Invalidate any pending completion or detail requests and hide UI
@@ -122,6 +124,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     setSuggestions(null);
     setSelectedDetail(null);
     setLoadingDetail(false);
+    dotFastRef.current = false;
     // Clear input
     setInput("");
     setRows(1);
@@ -895,13 +898,16 @@ const InputArea: React.FC<InputAreaProps> = ({
                   const firstVisible = Math.floor(list.scrollTop / rowH);
                   const visibleRows = Math.max(1, Math.floor(list.clientHeight / rowH));
                   const lastVisible = firstVisible + visibleRows - 1;
-                  // Only adjust when crossing the boundary, and scroll by exactly one row
+                  // If outside the visible window, jump so the row is fully visible
                   if (index > lastVisible) {
-                    const base = Math.round(list.scrollTop / rowH) * rowH;
-                    list.scrollTop = Math.min(list.scrollHeight - list.clientHeight, base + rowH);
+                    const target = index * rowH - (visibleRows - 1) * rowH;
+                    list.scrollTop = Math.min(
+                      list.scrollHeight - list.clientHeight,
+                      Math.max(0, Math.round(target / rowH) * rowH),
+                    );
                   } else if (index < firstVisible) {
-                    const base = Math.round(list.scrollTop / rowH) * rowH;
-                    list.scrollTop = Math.max(0, base - rowH);
+                    const target = index * rowH;
+                    list.scrollTop = Math.max(0, Math.round(target / rowH) * rowH);
                   }
                 };
                 if (e.key === "Backspace") {
@@ -931,11 +937,14 @@ const InputArea: React.FC<InputAreaProps> = ({
                     void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
                       if (action.kind === "close") {
                         setSuggestions(null);
+                        dotFastRef.current = false;
                         return;
                       }
                       if (action.kind === "open" || action.kind === "refresh") {
                         if (el.selectionStart !== el.selectionEnd) return;
                         updateCaretPosition();
+                        // Backspace-led triggers are not dot-initiated
+                        dotFastRef.current = false;
                         scheduleCompletionsFromEl(el, action.delay ?? 35);
                       }
                     });
@@ -1087,6 +1096,8 @@ const InputArea: React.FC<InputAreaProps> = ({
                 }
                 updateCaretPosition();
                 if (el.selectionStart === el.selectionEnd) {
+                  // Manual trigger: not a dot context
+                  dotFastRef.current = false;
                   scheduleCompletionsFromEl(el, 0);
                 } else {
                   setSuggestions(null);
@@ -1167,6 +1178,7 @@ const InputArea: React.FC<InputAreaProps> = ({
               const ck = getCheckExprStart(newValue, pos);
               if (isReplCommand(newValue) && !tf && ck === null) {
                 setSuggestions(null);
+                dotFastRef.current = false;
                 return;
               }
               const reqCode = tf ? tf.code : newValue;
@@ -1174,6 +1186,7 @@ const InputArea: React.FC<InputAreaProps> = ({
               void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
                 if (action.kind === "close") {
                   setSuggestions(null);
+                  dotFastRef.current = false;
                   return;
                 }
                 if (action.kind === "open" || action.kind === "refresh") {
@@ -1181,6 +1194,9 @@ const InputArea: React.FC<InputAreaProps> = ({
                     setSuggestions(null);
                     return;
                   }
+                  // Fast-path: if the last typed character was a dot, reduce overscan
+                  const isDot = reqPos > 0 && reqCode[reqPos - 1] === ".";
+                  dotFastRef.current = isDot;
                   scheduleCompletionsFromEl(el, action.delay ?? 35);
                 }
               });
@@ -1245,6 +1261,7 @@ const InputArea: React.FC<InputAreaProps> = ({
                 containerRef={suggestionsRef}
                 items={suggestions}
                 maxVisibleRows={6}
+                overscan={dotFastRef.current ? 2 : 6}
                 onMeasured={(m) => {
                   lastPopupMetricsRef.current = m;
                 }}
