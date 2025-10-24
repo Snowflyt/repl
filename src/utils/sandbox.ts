@@ -1,6 +1,14 @@
 import { Option } from "effect";
 import * as ts from "typescript";
 
+import { show } from "./show";
+
+// Register global variables/functions for the sandbox
+(function registerGlobals() {
+  (globalThis as any).show = show;
+  Object.defineProperty(show, "name", { value: "show", configurable: true });
+})();
+
 const AsyncFunction = async function () {}.constructor as FunctionConstructor;
 
 export type ConsoleListener = <Type extends Exclude<keyof Console, "Console">>(

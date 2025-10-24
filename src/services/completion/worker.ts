@@ -20,6 +20,7 @@ const lastAtaSourceImports: string[] = [];
 // Virtual filenames (use leading slash to align with vfs defaults)
 // Single module file that contains history + current input
 const REPL_FILE = "/repl.ts";
+const GLOBALS_FILE = "/repl.globals.d.ts";
 
 // Keep latest materialized history text and last user code
 let historyText = "";
@@ -132,6 +133,264 @@ function writeVfs(file: string, content: string) {
       // Fall through to sys.writeFile
     }
   env.sys.writeFile(file, content);
+}
+
+// Write or update the ambient globals lib which mirrors runtime globals in the sandbox
+function writeGlobalsLib() {
+  const content = `// Ambient REPL globals (keep in sync with src/utils/sandbox.ts)
+// These declarations provide editor IntelliSense for globals available at runtime.
+
+/**
+ * Options for {@link show}.
+ */
+interface ShowOptions {
+  /**
+   * Whether to call \`toJSON\` on the value before stringifying it (if available).
+   * @default false
+   */
+  callToJSON?: boolean;
+  /**
+   * Whether to call \`Symbol.for("nodejs.util.inspect.custom")\` on the value before stringifying it
+   * (if available). This option takes precedence over \`callToJSON\`.
+   * @default true
+   */
+  callNodeInspect?: boolean;
+  /**
+   * Whether to call \`Symbol.for("showify.inspect.custom")\` on the value before stringifying it
+   * (if available). This option takes precedence over \`callToJSON\` and \`callNodeInspect\`.
+   * @default true
+   */
+  callCustomInspect?: boolean;
+  /**
+   * The maximum depth to show.
+   * @default Infinity
+   */
+  depth?: number;
+  /**
+   * The number of spaces to use for indentation.
+   * @default 0
+   */
+  indent?: number;
+  /**
+   * The maximum line length before breaking. If \`indent\` is \`0\`, this option is ignored.
+   * @default 80
+   */
+  breakLength?: number;
+  /**
+   * Whether to show non-enumerable properties, should be \`"none"\`, \`"always"\`, or \`"exclude-meta"\`.
+   *
+   * For compatibility with Node.js’s \`util.inspect\`, \`true\` is also accepted as \`"always"\`, and
+   * \`false\` is also accepted as \`"none"\`, but it is recommended to use the string values for
+   * clarity.
+   *
+   * If this option is set to \`"exclude-meta"\`, it behaves the same as \`"always"\`, but the following
+   * “meta” properties are excluded:
+   *
+   * - \`name\` and \`length\` for callables.
+   * - “Regular” \`prototype\` for callables, which is one of the following:
+   *   - If the callable is an instance of \`Function\`, its \`prototype\` has only one own property
+   *     which is \`constructor\`, the \`constructor\` is the callable itself, and the [[Prototype]] of
+   *     the \`prototype\` property is \`Object.prototype\`, then it is excluded.
+   *   - If the callable is an instance of \`GeneratorFunction\`, its \`prototype\` has no properties,
+   *     and the [[Prototype]] of the \`prototype\` property is
+   *    \`GeneratorFunction.prototype.prototype\`, then it is excluded.
+   *   - If the callable is an instance of \`AsyncGeneratorFunction\`, its \`prototype\` has no
+   *     properties, and the [[Prototype]] of the \`prototype\` property is
+   *     \`AsyncGeneratorFunction.prototype.prototype\`, then it is excluded.
+   *   - (Async functions do not have a \`prototype\` property, so they are not affected.)
+   * - \`length\` for arrays and typed arrays.
+   * @default "none"
+   */
+  showHidden?: "none" | "always" | "exclude-meta" | boolean;
+  /**
+   * Whether to inspect getters.
+   *
+   * - If set to \`"none"\`, getters are not inspected, only shown as \`[Getter]\` or \`[Getter/Setter]\`.
+   * - If set to \`"get"\`, only getters without a corresponding setter are inspected.
+   * - If set to \`"set"\`, only setters with a corresponding getter are inspected.
+   * - If set to \`"all"\`, all getters are inspected.
+   *
+   * For compatibility with Node.js’s \`util.inspect\`, \`true\` is also accepted as \`"always"\`, and
+   * \`false\` is also accepted as \`"none"\`, but it is recommended to use the string values for
+   * clarity.
+   * @default "none"
+   */
+  getters?: "none" | "get" | "set" | "all" | boolean;
+  /**
+   * Whether to sort the keys of objects (including \`Map\`s and \`Set\`s) in the resulting string.
+   */
+  sorted?: boolean;
+  /**
+   * A set of keys to omit from the output.
+   *
+   * NOTE: This option is not recursive and only omits the top-level keys.
+   */
+  omittedKeys?: Set<string | symbol>;
+  /**
+   * The quote style to use for strings.
+   * @default ["double", "single", "backtick"]
+   */
+  quoteStyle?: QuoteStyle;
+  /**
+   * Whether to add quote around keys in objects. If set to \`"auto"\`, it will add quotes only when
+   * the key is not a valid identifier.
+   * @default "auto"
+   */
+  quoteKeys?: "auto" | "always";
+  /**
+   * Whether to add separators as thousands separators in numbers (including BigInts). If not set to
+   * \`"none"\`, it will use the provided string as the separator, e.g., \`","\` or \`"_"\`.
+   *
+   * For compatibility with Node.js’s \`util.inspect\`, \`true\` is also accepted as \`"_"\`, and \`false\`
+   * is also accepted as \`"none"\`, but it is recommended to use the string values for clarity.
+   * @default "none"
+   */
+  numericSeparator?: "none" | (string & {}) | boolean;
+  /**
+   * Whether to add a trailing comma to the last item in an array or object. If set to \`"auto"\`, it
+   * will add a trailing comma if the last item is on a separate line.
+   * @default "none"
+   */
+  trailingComma?: "none" | "auto" | "always";
+  /**
+   * Whether to add spaces inside array brackets.
+   * @default false
+   */
+  arrayBracketSpacing?: boolean;
+  /**
+   * Whether to add spaces inside object curly braces.
+   * @default true
+   */
+  objectCurlySpacing?: boolean;
+  /**
+   * Whether to add a reference pointer to circular references. If set to \`false\`, circular
+   * references are displayed as \`[Circular]\`.
+   * @default true
+   */
+  referencePointer?: boolean;
+  /**
+   * The maximum length of an array to show. If the array is longer than this length, it will be
+   * truncated and an ellipsis with the length of the truncation (e.g., \`[1, 2, ... 3 more items]\`)
+   * will be shown.
+   * @default Infinity
+   */
+  maxArrayLength?: number;
+  /**
+   * The maximum length of a string to show. If the string is longer than this length, it will be
+   * truncated and an ellipsis with the length of the truncation (e.g., "'aa'... 3 more characters")
+   * will be shown.
+   * @default Infinity
+   */
+  maxStringLength?: number;
+  /**
+   * Whether to colorize the output with ANSI codes.
+   */
+  colors?: boolean;
+  /**
+   * Colors for different types of values.
+   * @default { string: "green", symbol: "green", number: "yellow", bigint: "yellow", boolean: "yellow", null: "bold", undefined: "gray", date: "magenta", regexp: "red", special: "cyan" }
+   */
+  styles?: Partial<Styles>;
+  /**
+   * An array of \`{ if: (value) => boolean, then: (value, options, expand) => Node }\` objects to
+   * handle custom cases.
+   *
+   * NOTE: These custom serializers are only invoked for objects, primitives are not passed to them.
+   */
+  serializers?: readonly Serializer[];
+}
+type QuoteStyle =
+  | "single"
+  | "double"
+  | "backtick"
+  | ["single", "double", "backtick"]
+  | ["double", "single", "backtick"]
+  | ["single", "backtick", "double"]
+  | ["double", "backtick", "single"]
+  | ["backtick", "single", "double"]
+  | ["backtick", "double", "single"]
+  | ["single", "double"]
+  | ["double", "single"]
+  | ["single", "backtick"]
+  | ["backtick", "single"]
+  | ["double", "backtick"]
+  | ["backtick", "double"];
+interface Styles {
+  readonly string: colorize.Color;
+  readonly symbol: colorize.Color;
+  readonly number: colorize.Color;
+  readonly bigint: colorize.Color;
+  readonly boolean: colorize.Color;
+  readonly null: colorize.Color;
+  readonly undefined: colorize.Color;
+  readonly date: colorize.Color;
+  readonly regexp: colorize.Color;
+  readonly special: colorize.Color;
+}
+interface Serializer {
+  if: (value: object, options: SerializerOptions) => boolean;
+  then: (
+    value: object,
+    options: SerializerOptions,
+    expand: (value: unknown, options?: Partial<SerializerOptions>) => Node
+  ) => Node;
+}
+type SerializerOptions =
+  Omit<Required<ShowOptions>, "indent" | "breakLength" | "referencePointer"> & {
+    level: number;
+    ancestors: readonly object[];
+    c: ReturnType<typeof colorize.buildC>;
+  } extends infer R ?
+    {
+      [K in keyof R]: R[K];
+    }
+  : never;
+
+/**
+ * Stringify a value just like \`util.inspect\` in Node.js, handling almost all cases that you might
+ * encounter, including auto line breaking, indentation, terminal colors, circular references (with
+ * reference numbers), classes, wrapper objects, \`Map\`, array empty items, typed arrays, \`Date\`,
+ * \`RegExp\`, \`Error\`, \`Promise\`, and more.
+ * @param value The value to stringify.
+ * @param options The options for stringification.
+ * @returns The stringified value.
+ *
+ * @example
+ * \`\`\`javascript
+ * const value = {
+ *   foo: "bar",
+ *   "Hello\\nworld": [-0, 2n, NaN],
+ *   [Symbol("qux")]: { quux: "corge" },
+ *   map: new Map([
+ *     ["foo", "bar"],
+ *     [{ bar: 42 }, "qux"],
+ *   ]),
+ * };
+ * value.circular = value;
+ *
+ * console.log(show(value, { indent: 2, trailingComma: "auto", colors: true }));
+ * // <ref *1> {
+ * //   foo: "bar",
+ * //   "Hello\\nworld": [-0, 2n, NaN],
+ * //   map: Map(2) { "foo" => "bar", { bar: 42 } => "qux" },
+ * //   circular: [Circular *1],
+ * //   Symbol(qux): { quux: "corge" },
+ * // }
+ * \`\`\`
+ */
+declare function show(value: unknown, options?: ShowOptions): string;
+
+/**
+ * Clears the history of all previous inputs and outputs in the REPL.
+ */
+declare function clear(): void;
+
+/**
+ * All global variables available in the REPL environment.
+ */
+declare const globals: Record<string, unknown>;
+`;
+  writeVfs(GLOBALS_FILE, content);
 }
 
 // Ensure the REPL module file is a root script in the LS program
@@ -561,6 +820,9 @@ async function ensureEnv(): Promise<void> {
     const system = createSystem(fsMap);
     env = createVirtualTypeScriptEnvironment(system, Array.from(fsMap.keys()), ts, compilerOptions);
 
+    // Provide ambient globals for completions
+    writeGlobalsLib();
+
     initialized = true;
   })();
 
@@ -579,7 +841,8 @@ async function ensureEnv(): Promise<void> {
 function writeIndex(content: string) {
   if (!env) return;
   lastCode = content;
-  const header = "export {};\n"; // mark as module to avoid global pollution (e.g., window.name)
+  // Reference our ambient globals to include them in the LS program
+  const header = `/// <reference path="${GLOBALS_FILE}" />\nexport {};\n`;
   // Rewrite versioned imports in history to bare specifiers plus inline ATA comments
   const histRewritten = historyText ? rewriteCodeForAta(historyText).code : "";
   const hist = histRewritten ? histRewritten + "\n" : "";
