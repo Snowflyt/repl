@@ -28,7 +28,6 @@
     "react-dom": "^19.2.0",
     "showify": "^0.2.3",
     "troza": "^0.2.1",
-    "ts-blank-space": "^0.6.2",
     "typescript": "^5.9.3"
   },
   "devDependencies": {

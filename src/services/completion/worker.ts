@@ -204,6 +204,10 @@ function buildEnvFromSnippets(snippets: string[]): string {
     if (!code.trim()) continue;
     const sf = ts.createSourceFile(`/env/snippet_${i}.ts`, code, ts.ScriptTarget.ESNext, true);
     for (const node of sf.statements) {
+      const hasDeclare = (n: ts.Node): boolean => {
+        const mods = (n as any).modifiers as ts.NodeArray<ts.ModifierLike> | undefined;
+        return !!mods?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword);
+      };
       // Preserve import declarations for type acquisition and module symbol resolution (last-wins per module)
       if (ts.isImportDeclaration(node)) {
         if (ts.isStringLiteral(node.moduleSpecifier)) {
@@ -356,6 +360,28 @@ function buildEnvFromSnippets(snippets: string[]): string {
         const name = node.name.text;
         const full = code.slice(node.getStart(sf), node.getEnd());
         valueDecls.set(name, { text: full, order: ++order });
+      }
+      // Enums (value space unless declared)
+      else if (ts.isEnumDeclaration(node)) {
+        const name = node.name.text;
+        const full = code.slice(node.getStart(sf), node.getEnd());
+        if (hasDeclare(node)) {
+          typeDecls.set(name, { text: full, order: ++order });
+        } else {
+          valueDecls.set(name, { text: full, order: ++order });
+        }
+      }
+      // Namespaces/modules (value space unless declared)
+      else if (ts.isModuleDeclaration(node)) {
+        if (ts.isIdentifier(node.name)) {
+          const name = node.name.text;
+          const full = code.slice(node.getStart(sf), node.getEnd());
+          if (hasDeclare(node)) {
+            typeDecls.set(name, { text: full, order: ++order });
+          } else {
+            valueDecls.set(name, { text: full, order: ++order });
+          }
+        }
       }
       // Types: type aliases and interfaces (lives in type space)
       else if (

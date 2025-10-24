@@ -1,5 +1,4 @@
 import { Option } from "effect";
-import tsBlankSpace from "ts-blank-space";
 import * as ts from "typescript";
 
 const AsyncFunction = async function () {}.constructor as FunctionConstructor;
@@ -47,16 +46,29 @@ export class Sandbox {
    */
   async execute(code: string): Promise<Option.Option<unknown>> {
     const sourceFile = ts.createSourceFile(
-      "temp.js",
-      tsBlankSpace(code),
-      ts.ScriptTarget.Latest,
+      "repl.ts",
+      code,
+      ts.ScriptTarget.ESNext,
       true,
-      ts.ScriptKind.JS,
+      ts.ScriptKind.TS,
     );
 
     const variables: string[] = [];
     let codeToExecute = "";
     const imports: string[] = [];
+
+    // Helper: convert bare npm specifier to CDN URL (jsdelivr or mirror)
+    const toCdnUrl = (modulePath: string): string => {
+      const isBare =
+        /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@latest|@alpha|@beta|@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
+          modulePath,
+        );
+      if (isBare) {
+        const base = this.#useJsdMirror ? "https://cdn.jsdmirror.com" : "https://cdn.jsdelivr.net";
+        return `${base}/npm/${modulePath.replace(/\/$/, "")}/+esm`;
+      }
+      return modulePath;
+    };
 
     // Traverse every statement in the AST
     for (let i = 0; i < sourceFile.statements.length; i++) {
@@ -75,6 +87,29 @@ export class Sandbox {
         continue; // Skip normal processing for import statements
       }
 
+      // Handle TS import equals: `import X = require("mod")` or `import A = NS.B`
+      if (ts.isImportEqualsDeclaration(statement)) {
+        const name = statement.name.getText();
+        let codeLine = "";
+        const modRef = statement.moduleReference;
+        if (
+          ts.isExternalModuleReference(modRef) &&
+          ts.isStringLiteral((modRef as any).expression)
+        ) {
+          const mod = ((modRef as any).expression as ts.StringLiteral).text;
+          const url = toCdnUrl(mod);
+          codeLine =
+            `const __mod_${name} = await import("${url}");` +
+            `\nconst ${name} = ("default" in __mod_${name} ? __mod_${name}.default : __mod_${name});`;
+        } else {
+          const rhs = statement.moduleReference.getText();
+          codeLine = `const ${name} = ${rhs};`;
+        }
+        imports.push(codeLine);
+        variables.push(name);
+        continue;
+      }
+
       Array.prototype.push.apply(variables, this.#extractDeclaredVariables(statement));
 
       if (codeToExecute.trim() && !codeToExecute.trimEnd().endsWith(";")) codeToExecute += ";";
@@ -83,6 +118,10 @@ export class Sandbox {
         !ts.isVariableStatement(statement) &&
         !ts.isFunctionDeclaration(statement) &&
         !ts.isClassDeclaration(statement) &&
+        !ts.isEnumDeclaration(statement) &&
+        !ts.isTypeAliasDeclaration(statement) &&
+        !ts.isInterfaceDeclaration(statement) &&
+        !ts.isModuleDeclaration(statement) &&
         !this.#isControlFlowStatement(statement)
       ) {
         codeToExecute +=
@@ -101,13 +140,27 @@ export class Sandbox {
     if (codeToExecute.trim() && !codeToExecute.trimEnd().endsWith(";")) codeToExecute += ";";
     codeToExecute += `\nreturn { ${variables.join(", ")} };`;
 
+    // Transpile the assembled TS snippet to JS (with inline source maps)
+    const execTranspiled = ts.transpileModule(codeToExecute, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        jsx: ts.JsxEmit.Preserve,
+        inlineSourceMap: true,
+        inlineSources: true,
+      },
+      fileName: "repl_exec.ts",
+      reportDiagnostics: false,
+    });
+    const jsExec = execTranspiled.outputText;
+
     let result: Record<string, unknown>;
     try {
-      result = this.#evalSync("return (() => {\n" + codeToExecute + "\n})();") as never;
+      result = this.#evalSync("return (() => {\n" + jsExec + "\n})();") as never;
     } catch (error) {
       if (error instanceof SyntaxError)
         result = (await this.#evalAsync(
-          "return await (async () => {\n" + codeToExecute + "\n})();",
+          "return await (async () => {\n" + jsExec + "\n})();",
         )) as never;
       else throw error;
     }
@@ -199,19 +252,33 @@ export class Sandbox {
   #extractDeclaredVariables(statement: ts.Statement): string[] {
     const variables: string[] = [];
 
+    const hasDeclare = (node: ts.Node): boolean => {
+      const mods = (node as any).modifiers as ts.NodeArray<ts.ModifierLike> | undefined;
+      return !!mods?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword);
+    };
+
     // Handle variable declarations (let, const, var)
     if (ts.isVariableStatement(statement)) {
+      if (hasDeclare(statement)) return variables;
       for (const declaration of statement.declarationList.declarations) {
         this.#extractBindingNames(declaration.name, variables);
       }
     }
-    // Handle function declarations
-    else if (ts.isFunctionDeclaration(statement) && statement.name) {
+    // Handle function/class/enum declarations
+    else if (
+      (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+      statement.name
+    ) {
+      if (hasDeclare(statement)) return variables;
       variables.push(statement.name.text);
+    } else if (ts.isEnumDeclaration(statement)) {
+      if (!hasDeclare(statement)) variables.push(statement.name.text);
     }
-    // Handle class declarations
-    else if (ts.isClassDeclaration(statement) && statement.name) {
-      variables.push(statement.name.text);
+    // Handle namespace/module declarations
+    else if (ts.isModuleDeclaration(statement)) {
+      if (hasDeclare(statement)) return variables;
+      // ModuleDeclaration name can be Identifier or StringLiteral; we only handle Identifier for variable export
+      if (ts.isIdentifier(statement.name)) variables.push(statement.name.text);
     }
 
     return variables;
@@ -289,10 +356,17 @@ export class Sandbox {
    * @returns The processed statement.
    */
   #removeModuleSyntax(statement: string): string {
-    // Remove export and default keywords
-    // (Replace with spaces to keep error message positions consistent)
+    // Remove export keywords and the synthetic `export {}` emitted by TS
     statement = statement.replace(/^(\s*export\s+)default(\s+)/, "$1      $2");
     statement = statement.replace(/^(\s*)export(\s+)/, "$1      $2");
+    // Drop pure module marker and re-export forms (no runtime effect for REPL)
+    if (/^\s*export\s*\{\s*\}\s*;?\s*$/.test(statement)) return "";
+    if (/^\s*export\s+type\s*\{[\s\S]*?\}(\s*from\s+("[^"]+"|'[^']+'))?\s*;?\s*$/.test(statement))
+      return "";
+    if (/^\s*export\s*\{[\s\S]*?\}(\s*from\s+("[^"]+"|'[^']+'))?\s*;?\s*$/.test(statement))
+      return "";
+    if (/^\s*export\s*\*\s*from\s+("[^"]+"|'[^']+')\s*;?\s*$/.test(statement)) return "";
+    if (/^\s*export\s*=\s*/.test(statement)) return ""; // export = X
     return statement;
   }
 
