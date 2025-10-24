@@ -471,6 +471,7 @@ ${Cr}`.trim();ho.push(Ds);continue}if(Nn==="template"||Nn==="typeparam"){const D
 `)),ho.length&&ra.push(ho.join(`
 `)),gs.length&&ra.push(["**Throws**",...gs].join(`
 `)),ki.length&&ra.push(ki.join(`
+
 `)),Bo.length&&ra.push(Bo.join(`
 
 `)),{detail:As,documentation:ra.join(`
