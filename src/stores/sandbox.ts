@@ -60,6 +60,11 @@ const mockConsole = () => {
   };
 
   console.error = function error(...args: unknown[]) {
+    if (typeof args[0] === "string" && args[0].startsWith("\u8bf7\u63a5\u5165 zhihu-hybrid")) {
+      // Bypass error message in Zhihu Hybrid environment
+      originalConsole.error(...args);
+      return;
+    }
     // TODO: Support error stack
     appendOutput("error", indent(showArgs(args)));
   };
