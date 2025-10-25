@@ -61,7 +61,7 @@ export class Sandbox {
       ts.ScriptKind.TS,
     );
 
-    const variables: string[] = [];
+    const variables = new Set<string>();
     let codeToExecute = "";
     const imports: string[] = [];
 
@@ -88,9 +88,8 @@ export class Sandbox {
         const importStatement = this.#transformImportToDynamic(statement);
         if (importStatement) {
           imports.push(importStatement.code);
-          if (importStatement.variables.length > 0) {
-            Array.prototype.push.apply(variables, importStatement.variables);
-          }
+          if (importStatement.variables.length > 0)
+            for (const v of importStatement.variables) variables.add(v);
         }
         continue; // Skip normal processing for import statements
       }
@@ -114,11 +113,11 @@ export class Sandbox {
           codeLine = `const ${name} = ${rhs};`;
         }
         imports.push(codeLine);
-        variables.push(name);
+        variables.add(name);
         continue;
       }
 
-      Array.prototype.push.apply(variables, this.#extractDeclaredVariables(statement));
+      for (const v of this.#extractDeclaredVariables(statement)) variables.add(v);
 
       if (codeToExecute.trim() && !codeToExecute.trimEnd().endsWith(";")) codeToExecute += ";";
       if (
@@ -134,11 +133,14 @@ export class Sandbox {
       ) {
         codeToExecute +=
           "\nconst __repl_result___ = " + this.#removeModuleSyntax(statement.getText()) + ";";
-        variables.push("__repl_result___");
+        variables.add("__repl_result___");
       } else {
         codeToExecute += "\n" + this.#removeModuleSyntax(statement.getText());
       }
     }
+
+    // Ensure we also return existing context variables so reassignment like `a = 2` is flushed back
+    for (const key of Object.keys(this.#context)) variables.add(key);
 
     // Prepend the transformed imports to the code
     if (imports.length > 0)
@@ -146,7 +148,7 @@ export class Sandbox {
         imports.join("\n") + (codeToExecute.startsWith("\n") ? "" : "\n") + codeToExecute;
 
     if (codeToExecute.trim() && !codeToExecute.trimEnd().endsWith(";")) codeToExecute += ";";
-    codeToExecute += `\nreturn { ${variables.join(", ")} };`;
+    codeToExecute += `\nreturn { ${Array.from(variables).join(", ")} };`;
 
     // Transpile the assembled TS snippet to JS (with inline source maps)
     const execTranspiled = ts.transpileModule(codeToExecute, {
@@ -173,9 +175,11 @@ export class Sandbox {
       else throw error;
     }
 
+    // Update context only when values actually change, using Object.is
     for (const [key, value] of Object.entries(result)) {
       if (key === "__repl_result___") continue;
-      this.#context[key] = value;
+      const hadKey = Object.prototype.hasOwnProperty.call(this.#context, key);
+      if (!hadKey || !Object.is(this.#context[key], value)) this.#context[key] = value;
     }
 
     return "__repl_result___" in result ? Option.some(result.__repl_result___) : Option.none();
