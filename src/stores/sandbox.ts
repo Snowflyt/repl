@@ -177,7 +177,6 @@ const sandboxStore = create({
           import("../utils/sandbox")
             .then(({ Sandbox }) => {
               sandbox = new Sandbox();
-              void sandbox.checkCdnAccessibility();
               mockConsole();
               this.isLoading = false;
             })
@@ -187,7 +186,6 @@ const sandboxStore = create({
 
     const { Sandbox } = await import("../utils/sandbox");
     sandbox = new Sandbox();
-    void sandbox.checkCdnAccessibility();
     mockConsole();
     this.isLoading = false;
   },
