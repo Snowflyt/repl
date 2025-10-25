@@ -19,34 +19,6 @@ export type ConsoleListener = <Type extends Exclude<keyof Console, "Console">>(
 export class Sandbox {
   #context: Record<string, unknown> = {};
 
-  #useJsdMirror = false;
-
-  /**
-   * Check if jsdelivr is accessible and switch to mirror if needed.
-   * This should be called when initializing the sandbox.
-   */
-  async checkCdnAccessibility(): Promise<void> {
-    try {
-      // Try to fetch a small file from jsdelivr with timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-      const response = await fetch("https://cdn.jsdelivr.net/npm/lodash@4.17.21/package.json", {
-        cache: "no-store",
-        method: "HEAD",
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      // If the request fails or times out, use the mirror
-      this.#useJsdMirror = !response.ok;
-    } catch (error) {
-      // Network error or timeout occurred, use the mirror
-      this.#useJsdMirror = true;
-    }
-  }
-
   /**
    * Execute code in the sandbox.
    * @param code The code to execute.
@@ -65,16 +37,13 @@ export class Sandbox {
     let codeToExecute = "";
     const imports: string[] = [];
 
-    // Helper: convert bare npm specifier to CDN URL (jsdelivr or mirror)
+    // Helper: convert bare npm specifier to CDN URL
     const toCdnUrl = (modulePath: string): string => {
       const isBare =
         /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@latest|@alpha|@beta|@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
           modulePath,
         );
-      if (isBare) {
-        const base = this.#useJsdMirror ? "https://cdn.jsdmirror.com" : "https://cdn.jsdelivr.net";
-        return `${base}/npm/${modulePath.replace(/\/$/, "")}/+esm`;
-      }
+      if (isBare) return "https://esm.sh/" + modulePath;
       return modulePath;
     };
 
@@ -186,7 +155,7 @@ export class Sandbox {
   }
 
   /**
-   * Transforms an import statement into a dynamic import from jsdelivr CDN.
+   * Transforms an import statement into a dynamic import from esm.sh CDN.
    * @param importDecl The import declaration node.
    * @returns The transformed import statement and the variables it declares.
    */
@@ -209,8 +178,7 @@ export class Sandbox {
           modulePath,
         )
       ) ?
-        (this.#useJsdMirror ? "https://cdn.jsdmirror.com" : "https://cdn.jsdelivr.net") +
-        `/npm/${modulePath.replace(/\/$/, "")}/+esm`
+        "https://esm.sh/" + modulePath
       : modulePath;
     const variables: string[] = [];
 

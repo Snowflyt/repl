@@ -11,7 +11,7 @@
 - **Interactively** execute <del>any</del> almost any JavaScript/TypeScript code directly in your browser.
 - _(Type annotations are stripped before execution, and no type checking is performed.)_
 - Beautiful output with **syntax highlighting** (powered by [highlight.js](https://github.com/highlightjs/highlight.js)) and **pretty-printing** (enabled by [showify](https://github.com/Snowflyt/showify)).
-- **Import any NPM package** directly with `import` statements (powered by [jsdelivr](https://www.jsdelivr.com/)).
+- **Import any NPM package** directly with `import` statements (powered by [esm.sh](https://esm.sh/)).
 - **Auto-completion (intellisense)** powered by the TypeScript language service running in a Web Worker. Third-party type definitions are automatically fetched when importing NPM packages (powered by [@typescript/ata](https://www.npmjs.com/package/@typescript/ata)).
 - **Shareable** links to your REPL, with history encoded in the URL.
 - **Top-level `await`** is supported, and can be cancelled using <kbd>Ctrl</kbd> + <kbd>C</kbd>.
