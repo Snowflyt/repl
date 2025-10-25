@@ -197,6 +197,9 @@ export class Sandbox {
       return null;
     }
 
+    // Skip type-only import entirely (no runtime effect)
+    if (importDecl.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword) return null;
+
     const modulePath = importDecl.moduleSpecifier.text;
     const url =
       // Check if the module specifier starts with a valid npm package name
@@ -234,25 +237,32 @@ export class Sandbox {
 
     // Handle named imports: import { export1, export2 as alias2 } from 'module';
     else if (namedBindings && ts.isNamedImports(namedBindings)) {
-      const imports = namedBindings.elements
-        .map((element) => {
-          const importName = element.name.text;
-          const propertyName = element.propertyName?.text;
+      // Filter out type-only specifiers. Use a safe cast for older TS versions.
+      const valueElements = namedBindings.elements.filter((el) => (el as any).isTypeOnly !== true);
 
-          variables.push(importName);
+      if (valueElements.length > 0) {
+        const imports = valueElements
+          .map((element) => {
+            const importName = element.name.text;
+            const propertyName = element.propertyName?.text;
 
-          if (propertyName) {
-            return `${propertyName}: ${importName}`;
-          } else {
-            return importName;
-          }
-        })
-        .join(", ");
+            variables.push(importName);
 
-      if (code) code += "\n";
-      code += `const { ${imports} } = await import("${url}");`;
+            if (propertyName) {
+              return `${propertyName}: ${importName}`;
+            } else {
+              return importName;
+            }
+          })
+          .join(", ");
+
+        if (code) code += "\n";
+        code += `const { ${imports} } = await import("${url}");`;
+      }
     }
 
+    // If no runtime code or variables produced (e.g., only type imports), return null
+    if (!code && variables.length === 0) return null;
     return { code, variables };
   }
 
