@@ -82,15 +82,14 @@ const ShareIcon = React.memo<ShareIconProps>(function ShareIcon({ className }) {
 
   // Generate shareable URL
   const getShareableUrl = useCallback(() => {
-    const url = persistHistoryInURL(historyStore.history);
+    // Prepare base search params reflecting rerun toggle
+    const base = new URLSearchParams(window.location.search);
+    if (autoRerun) base.set("rerun", "");
+    else base.delete("rerun");
 
-    // Add or remove rerun parameter based on switch state
-    if (autoRerun) {
-      url.searchParams.set("rerun", "");
-    } else {
-      url.searchParams.delete("rerun");
-    }
-    // Make sure `history` parameter is always last
+    const url = persistHistoryInURL(historyStore.history, base);
+
+    // Ensure `history` parameter is last for aesthetics
     if (url.searchParams.has("history")) {
       const history = url.searchParams.get("history")!;
       url.searchParams.delete("history");
@@ -151,7 +150,7 @@ const ShareIcon = React.memo<ShareIconProps>(function ShareIcon({ className }) {
                 type="text"
                 readOnly
                 value={getShareableUrl()}
-                className="flex-grow rounded border border-gray-700 bg-[#2a1e30] px-2 py-1 text-sm text-white"
+                className="grow rounded border border-gray-700 bg-[#2a1e30] px-2 py-1 text-sm text-white"
                 onClick={(e) => e.currentTarget.select()}
               />
               <button

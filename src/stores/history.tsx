@@ -3,7 +3,8 @@ import { match } from "megamatch";
 import { create, get } from "troza";
 import { hookify } from "troza/react";
 
-import type { HistoryEntry } from "../types";
+import type { HistoryEntry, HistoryEntryLike } from "../types";
+import { isReplCommand } from "../utils/sandbox";
 import { show } from "../utils/show";
 
 import sandboxStore from "./sandbox";
@@ -19,7 +20,7 @@ export function isReplCommand(input: string): boolean {
 }
 
 const historyStore = create({
-  history: [] as (HistoryEntry | { type: "recovered-mark" })[],
+  history: [] as HistoryEntryLike[],
 
   [get("inputHistory")]() {
     return this.history.filter((entry) => entry.type === "input");
@@ -59,7 +60,7 @@ const historyStore = create({
     if (entry?.type !== "input") return;
     let end = historyIndex + 1;
     while (end < history.length) {
-      const e = history[end] as HistoryEntry | { type: "recovered-mark" };
+      const e = history[end]!;
       if (e.type === "input" || e.type === "recovered-mark") break;
       end++;
     }
@@ -119,11 +120,77 @@ if (historyParam)
     // Ignore
   }
 
-export const persistHistoryInURL = (
-  history: (HistoryEntry | { type: "recovered-mark" })[],
-): URL => {
-  const searchParams = new URLSearchParams(window.location.search);
-  if (!history.length) searchParams.delete("history");
+/**
+ * Scan a history block starting at a given input index and determine whether recover() would re-execute it.
+ * @param history Full history array (may include recovered-mark entries).
+ * @param startIndex Index of an input entry to start scanning from.
+ * @returns Object with `endIndex` pointing to the next input (or end), and `shouldRecover` decision.
+ */
+export function scanHistoryBlock(
+  history: HistoryEntryLike[],
+  startIndex: number,
+): { endIndex: number; shouldRecover: boolean } {
+  const start = startIndex;
+  const entry = history[start];
+  if (entry?.type !== "input") return { endIndex: startIndex + 1, shouldRecover: false };
+
+  // REPL commands are not re-executed
+  if (isReplCommand(entry.value)) {
+    let j = start + 1;
+    while (j < history.length && history[j]!.type !== "input") j++;
+    return { endIndex: j, shouldRecover: false };
+  }
+
+  let j = start + 1;
+  let shouldRecover = true;
+  while (j < history.length) {
+    const next = history[j]!;
+    if (next.type === "input") break;
+    if (
+      next.type === "error" ||
+      (next.type === "output" && next.variant === "info" && next.value === "Execution cancelled")
+    )
+      shouldRecover = false;
+    j++;
+  }
+
+  return { endIndex: j, shouldRecover };
+}
+
+/**
+ * Filter history for rerun mode by removing outputs for blocks that would be re-executed by recover().
+ * @param history Full history array (may include recovered-mark entries).
+ * @returns Filtered history array with only inputs for re-runnable blocks.
+ */
+export function filterHistoryForRerun(history: HistoryEntryLike[]): HistoryEntryLike[] {
+  const result: HistoryEntryLike[] = [];
+
+  let i = 0;
+  while (i < history.length) {
+    const entry = history[i]!;
+    if (entry.type !== "input") {
+      result.push(entry);
+      i++;
+      continue;
+    }
+    const { endIndex, shouldRecover } = scanHistoryBlock(history, i);
+    if (shouldRecover) result.push(entry);
+    else for (let k = i; k < endIndex; k++) result.push(history[k]!);
+    i = endIndex;
+  }
+
+  return result;
+}
+
+export function persistHistoryInURL(
+  history: HistoryEntryLike[],
+  baseSearchParams?: URLSearchParams,
+): URL {
+  const searchParams = new URLSearchParams(baseSearchParams ?? window.location.search);
+
+  const historyToPersist = searchParams.has("rerun") ? filterHistoryForRerun(history) : history;
+
+  if (!historyToPersist.length) searchParams.delete("history");
   else
     searchParams.set(
       "history",
@@ -133,11 +200,12 @@ export const persistHistoryInURL = (
         ),
       ),
     );
+
   return new URL(
     window.location.pathname + (searchParams.size ? "?" + searchParams.toString() : ""),
     window.location.origin,
   );
-};
+}
 
 // Persist history to search params
 historyStore.$subscribe(

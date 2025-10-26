@@ -6,7 +6,7 @@ import type { HistoryEntry } from "../types";
 import type { Sandbox } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
 
-import historyStore, { isReplCommand } from "./history";
+import historyStore, { scanHistoryBlock } from "./history";
 
 let sandbox: Sandbox | null = null;
 let executionAbortController: AbortController | null = null;
@@ -242,43 +242,22 @@ const sandboxStore = create({
 
     for (let i = 0; i < history.length; i++) {
       const entry = history[i]!;
-      if (entry.type === "input") {
-        // Skip re-executing REPL commands (e.g., :check, :type). Preserve original entries as-is.
-        if (isReplCommand(entry.value)) {
-          const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
-          for (let j = i + 1; j < history.length; j++) {
-            const nextEntry = history[j]!;
-            if (nextEntry.type === "input") break;
-            oldRelatedEntries.push(nextEntry);
-          }
-          historyStore.history.push(entry);
-          Array.prototype.push.apply(historyStore.history, oldRelatedEntries);
-          continue;
-        }
+      if (entry.type !== "input") continue;
 
-        let shouldRecover = true;
-        const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
-        for (let j = i + 1; j < history.length; j++) {
-          const nextEntry = history[j]!;
-          if (nextEntry.type === "input") break;
-          if (nextEntry.type === "error") {
-            shouldRecover = false;
-          } else {
-            if (nextEntry.variant === "info" && nextEntry.value === "Execution cancelled") {
-              shouldRecover = false;
-            }
-          }
-          oldRelatedEntries.push(nextEntry);
-        }
-
-        if (!shouldRecover) {
-          historyStore.history.push(entry);
-          Array.prototype.push.apply(historyStore.history, oldRelatedEntries);
-          continue;
-        }
-
-        await this.execute(entry.value, false);
+      const { endIndex, shouldRecover } = scanHistoryBlock(history as any, i);
+      const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
+      for (let j = i + 1; j < endIndex; j++) {
+        const e = history[j]!;
+        if (e.type !== "input") oldRelatedEntries.push(e);
       }
+
+      if (!shouldRecover) {
+        historyStore.history.push(entry);
+        Array.prototype.push.apply(historyStore.history, oldRelatedEntries);
+        continue;
+      }
+
+      await this.execute(entry.value, false);
     }
 
     this.isExecuting = false;
