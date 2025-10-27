@@ -5,7 +5,13 @@ import {
   createSystem,
   createVirtualTypeScriptEnvironment,
 } from "@typescript/vfs";
+import untar from "js-untar";
+import { inflate } from "pako";
+import semverValid from "semver/functions/valid";
+import semverMaxSatisfying from "semver/ranges/max-satisfying";
 import * as ts from "typescript";
+
+const filesCache = new Map</* pkg@ver */ string, Awaited<ReturnType<typeof untar>>>();
 
 let env: ReturnType<typeof createVirtualTypeScriptEnvironment> | null = null;
 let initialized = false;
@@ -1053,6 +1059,132 @@ function initATA() {
         }
       },
     },
+    // Redirect jsDelivr -> NPM registry because jsDelivr is unreliable in China
+    fetcher: async (input, init) => {
+      const url =
+        typeof input === "string" ? input
+        : input instanceof URL ? input.toString()
+        : "";
+
+      if (url) {
+        const NPM_REGISTRY = "https://registry.npmjs.org";
+
+        const json = (json: unknown, status = 200, contentType = "application/json") =>
+          new Response(JSON.stringify(json), { status, headers: { "Content-Type": contentType } });
+
+        const notFound = (message = "") =>
+          json({ status: 404, ...(message ? { message } : {}) }, 404);
+
+        const resolvePackage = async (
+          pkg: string,
+        ): Promise<{ name: string; version: string; dist: { tarball: string } } | null> => {
+          const atIndex = pkg.lastIndexOf("@");
+          const [name, version] =
+            atIndex <= 0 ?
+              ([pkg, "latest"] as const)
+            : ([pkg.slice(0, atIndex), pkg.slice(atIndex + 1)] as const);
+
+          let res: Response;
+          try {
+            res = await fetch(`${NPM_REGISTRY}/${name}`, init);
+          } catch (e) {
+            return null;
+          }
+          if (!res.ok) return null;
+          const data = await res.json();
+          const tags = data["dist-tags"] || {};
+          const versions = data.versions || {};
+
+          if (tags[version]) return versions[tags[version]];
+
+          if (versions[version]) return versions[version];
+
+          const resolvedVersion = semverMaxSatisfying(
+            Object.keys(versions).filter((v) => semverValid(v)),
+            version,
+          );
+          if (resolvedVersion) return versions[resolvedVersion];
+
+          return null;
+        };
+
+        // /v1/package/npm/:name@:ver/flat -> decompressed tarball file list
+        if (/^https:\/\/data\.jsdelivr\.com\/v1\/package\/npm\/.+@.+\/flat$/.test(url)) {
+          const match = /package\/npm\/(.+)$/.exec(url.replace(/\/flat$/, ""));
+          if (!match) return notFound();
+          const pkg = await resolvePackage(decodeURIComponent(match[1]!));
+          if (!pkg) return notFound();
+
+          const res = await fetch(pkg.dist.tarball, init);
+          if (!res.ok) return notFound();
+
+          const decompressed = inflate(await res.arrayBuffer());
+          let files = await untar(decompressed.buffer);
+          files = files.map((f) => ({ ...f, name: f.name.replace(/^[^/]+\//, "/") }));
+          if (!filesCache.has(pkg.name + "@" + pkg.version))
+            filesCache.set(pkg.name + "@" + pkg.version, files);
+
+          return json({ files: files.map((file) => ({ name: file.name })) });
+        }
+
+        // /v1/package/npm/:name -> package metadata via NPM registry
+        if (url.startsWith("https://data.jsdelivr.com/v1/package/npm/")) {
+          const pkg = url.split("/").pop()!;
+
+          const res = await fetch(`${NPM_REGISTRY}/${pkg}`, init);
+          if (!res.ok) return notFound("Couldn't fetch versions for " + pkg);
+          const data = await res.json();
+
+          return json({
+            tags: data["dist-tags"],
+            versions: Object.keys(data.versions).sort((a, b) => b.localeCompare(a)),
+          });
+        }
+
+        // /v1/package/resolve/npm/:name@:ref -> resolve version via NPM registry
+        if (url.startsWith("https://data.jsdelivr.com/v1/package/resolve/npm/")) {
+          const match = /resolve\/npm\/(.+)$/.exec(url);
+          if (!match) return notFound();
+          const pkg = decodeURIComponent(match[1]!);
+          const version = (await resolvePackage(pkg))?.version;
+          if (!version) return notFound("Couldn't fetch versions for " + pkg);
+          return json({ version });
+        }
+
+        // jsDelivr CDN for files -> decompressed file content from cached tarball
+        if (url.startsWith("https://cdn.jsdelivr.net/npm/")) {
+          const match =
+            /\/npm\/(@[^@/]+\/[^@/]+@[^/]+)(.+)$/.exec(url) ||
+            /\/npm\/([^@/]+@[^/]+)(.+)$/.exec(url);
+          if (!match) return notFound();
+          const pkg = match[1]!;
+          const path = match[2] || "/";
+
+          if (!filesCache.has(pkg)) {
+            const resolvedPkg = await resolvePackage(pkg);
+            if (!resolvedPkg) return notFound("Couldn't fetch versions for " + pkg);
+            const res = await fetch(resolvedPkg.dist.tarball, init);
+            if (!res.ok) return notFound();
+            const decompressed = inflate(await res.arrayBuffer());
+            let files = await untar(decompressed.buffer);
+            files = files.map((f) => ({ ...f, name: f.name.replace(/^[^/]+\//, "/") }));
+            filesCache.set(pkg, files);
+          }
+
+          const files = filesCache.get(pkg)!;
+          const file = files.find((f) => f.name === path);
+          if (!file) return notFound();
+
+          return new Response(file.buffer, {
+            status: 200,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+      }
+
+      // Fallback to direct fetch
+      return fetch(url, init);
+    },
   });
 }
 
@@ -1495,7 +1627,9 @@ const handlers = {
         lastAtaSourceImports.splice(0, lastAtaSourceImports.length, ...packages);
         Promise.resolve()
           .then(() => ataRunner!(ataCode))
-          .catch((e: unknown) => console.error("[completion:ata] runner error", e));
+          .catch((e: unknown) => {
+            console.error("[completion:ata] runner error", e);
+          });
       } else {
         lastAtaSourceImports.splice(0, lastAtaSourceImports.length);
       }
