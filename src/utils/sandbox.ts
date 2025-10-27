@@ -1,12 +1,260 @@
 import { Option } from "effect";
+import { filetypemime } from "magic-bytes.js";
 import * as ts from "typescript";
 
+import historyStore from "../stores/history";
+import type { MimeBundle } from "../types";
+
 import { show } from "./show";
+
+// Simple registry to hold live Nodes (Elements or DocumentFragments),
+// so we can render them directly in the history without serializing
+class LiveNodeRegistry {
+  #registry = new Map<string, Node>();
+
+  add(node: Node): string {
+    const id = "live:" + crypto.randomUUID();
+    this.#registry.set(id, node);
+    return id;
+  }
+
+  get(id: string): Node | undefined {
+    return this.#registry.get(id);
+  }
+
+  remove(id: string): void {
+    this.#registry.delete(id);
+  }
+}
+
+export const liveNodeRegistry = new LiveNodeRegistry();
+
+const JUPYTER_DISPLAY_SYMBOL = Symbol.for("Jupyter.display");
+
+// Display a value into the REPL history, similar to Deno.jupyter.display(obj)
+export async function display(value: unknown): Promise<void> {
+  try {
+    // If value is a DOM Element or DocumentFragment, live render and persist snapshot
+    if (value instanceof Element || value instanceof DocumentFragment) {
+      const node = value;
+      const liveId = liveNodeRegistry.add(node);
+
+      let label: string;
+      if (node instanceof Element)
+        label = `<${node.tagName.toLowerCase()}>…</${node.tagName.toLowerCase()}>`;
+      else label = "DocumentFragment";
+
+      // Build conservative HTML snapshot with <canvas> placeholders
+      const placeholderHtml = (() => {
+        const wrapper = document.createElement("div");
+        const clone = node.cloneNode(true);
+        wrapper.append(clone);
+        const canvases = wrapper.querySelectorAll("canvas");
+        canvases.forEach((canvas) => {
+          const placeholder = document.createElement("div");
+          placeholder.className = "repl-live-placeholder text-gray-400 text-sm";
+          placeholder.innerHTML =
+            '<div class="repl-live-placeholder__inner">' +
+            '<div class="repl-live-placeholder__title">Canvas not persisted</div>' +
+            '<div class="repl-live-placeholder__hint">Rerun to regenerate</div>' +
+            "</div>";
+          const style = canvas.style;
+          if (style.length > 0) {
+            const allowed = new Set([
+              "width",
+              "height",
+              "position",
+              "left",
+              "top",
+              "right",
+              "bottom",
+              "transform",
+              "transform-origin",
+              "margin",
+              "margin-left",
+              "margin-right",
+              "margin-top",
+              "margin-bottom",
+              "padding",
+              "padding-left",
+              "padding-right",
+              "padding-top",
+              "padding-bottom",
+              "display",
+              "z-index",
+              "pointer-events",
+              "user-select",
+              "box-sizing",
+              "overflow",
+            ]);
+            const decl: string[] = [];
+            for (let i = 0; i < style.length; i++) {
+              const name = style.item(i);
+              if (!name) continue;
+              const key = name.toLowerCase();
+              if (!allowed.has(key)) continue;
+              const val = style.getPropertyValue(name);
+              if (val) decl.push(`${key}: ${val}`);
+            }
+            if (decl.length) placeholder.setAttribute("style", decl.join("; "));
+          }
+          if (!style.width) {
+            const wAttr = canvas.getAttribute("width");
+            if (wAttr && /(%)|(px$)/.test(wAttr)) placeholder.style.width = wAttr;
+          }
+          if (!style.height) {
+            const hAttr = canvas.getAttribute("height");
+            if (hAttr && /(%)|(px$)/.test(hAttr)) placeholder.style.height = hAttr;
+          }
+          canvas.replaceWith(placeholder);
+        });
+        return wrapper.innerHTML;
+      })();
+
+      const wrapperHtml = `<div data-repl-live-id="${liveId}" style="width: fit-content">${placeholderHtml}</div>`;
+      await historyStore.appendRichOutput({
+        "text/plain": label,
+        "text/html": wrapperHtml,
+        "application/x.repl-live-id": liveId,
+      });
+      return;
+    }
+
+    // If value supports Jupyter.display symbol, use its MIME bundle
+    const displayFn =
+      value && typeof value === "object" ? (value as any)[JUPYTER_DISPLAY_SYMBOL] : null;
+    if (typeof displayFn === "function") {
+      let bundle: MimeBundle | null = null;
+      try {
+        const result = displayFn.call(value);
+        bundle = result && typeof result === "object" ? result : null;
+      } catch (e) {
+        // Ignore, fallback to text
+      }
+      if (bundle) {
+        if (
+          bundle["application/x.repl-hide-input"] &&
+          historyStore.$get().history[historyStore.$get().history.length - 1]?.type !== "hide-input"
+        )
+          historyStore.appendHideInput();
+        await historyStore.appendRichOutput(bundle);
+        return;
+      }
+    }
+
+    // Fallback
+    historyStore.appendOutput(show(value));
+  } catch (e) {
+    historyStore.appendError(e);
+  }
+}
 
 // Register global variables/functions for the sandbox
 (function registerGlobals() {
   (globalThis as any).show = show;
   Object.defineProperty(show, "name", { value: "show", configurable: true });
+
+  (globalThis as any).display = display;
+  Object.defineProperty(display, "name", { value: "display", configurable: true });
+
+  // ==== Rich content helpers inspired by Deno.jupyter, exposed as `Rich.*` ====
+  // They create values that the REPL recognizes as rich bundles via Symbol.for("Jupyter.display").
+
+  type ImageMime = `image/${string}`;
+
+  // Parse MIME from data: URL (e.g. data:image/png;base64,...)
+  const parseDataUrlMime = (dataUrl: string): string | null => {
+    const m = /^data:([^;,]+)[^,]*,/i.exec(dataUrl);
+    return m ? m[1]!.toLowerCase() : null;
+  };
+
+  // Very fast check for inline SVG markup strings
+  const isSvgMarkupString = (s: string): boolean => {
+    const head = s.slice(0, 256).trimStart();
+    return /^(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(head) || /^<!doctype\s+svg\b/i.test(head);
+  };
+
+  const toStringFromTemplate = (strings: TemplateStringsArray, values: unknown[]): string => {
+    let result = "";
+    for (let i = 0; i < strings.length; i++) {
+      result += strings[i] ?? "";
+      if (i < values.length) result += String(values[i]);
+    }
+    return result;
+  };
+
+  const asDisplayable = (bundle: MimeBundle) => ({
+    [JUPYTER_DISPLAY_SYMBOL]() {
+      return bundle;
+    },
+  });
+
+  const Rich = {
+    $display: JUPYTER_DISPLAY_SYMBOL,
+
+    // HTML tagged template -> text/html
+    html(strings: TemplateStringsArray, ...values: unknown[]) {
+      const html = toStringFromTemplate(strings, values);
+      return asDisplayable({
+        "text/html": html,
+      });
+    },
+
+    // Markdown tagged template -> text/markdown
+    md(strings: TemplateStringsArray, ...values: unknown[]) {
+      const md = toStringFromTemplate(strings, values);
+      return asDisplayable({
+        "text/markdown": md,
+      });
+    },
+
+    // Markdown block (Jupyter-style): hides the input cell
+    mdBlock(strings: TemplateStringsArray, ...values: unknown[]) {
+      const md = toStringFromTemplate(strings, values);
+      return asDisplayable({
+        "application/x.repl-hide-input": true,
+        "text/markdown": md,
+      });
+    },
+
+    // SVG tagged template -> image/svg+xml
+    svg(strings: TemplateStringsArray, ...values: unknown[]) {
+      const svg = toStringFromTemplate(strings, values);
+      return asDisplayable({
+        "image/svg+xml": svg,
+      });
+    },
+
+    // Image from URL/data URL/blob URL or raw bytes. When passing bytes, we try to sniff mime (fallback image/png)
+    image(data: string | Uint8Array | ArrayBuffer, mimeType?: ImageMime) {
+      if (typeof data === "string") {
+        // data URL -> use declared MIME directly (except svg -> render via <img>)
+        if (/^data:/i.test(data)) {
+          const mime = mimeType ?? parseDataUrlMime(data);
+          if (mime && mime.toLowerCase() !== "image/svg+xml")
+            return asDisplayable({ [mime]: data });
+          const escaped = data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          return asDisplayable({ "text/html": `<img src="${escaped}" alt="image" />` });
+        }
+
+        // Inline SVG markup string -> render as real SVG
+        if (isSvgMarkupString(data)) return asDisplayable({ "image/svg+xml": data });
+
+        // For other strings (URLs/paths), avoid guessing by extension; render via HTML <img>
+        const escaped = data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return asDisplayable({ "text/html": `<img src="${escaped}" alt="image" />` });
+      }
+
+      // Bytes: detect using magic-bytes.js, fallback to provided mimeType or image/png
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      const detected = filetypemime(bytes)[0]?.toLowerCase();
+      const mime =
+        mimeType ?? (detected?.startsWith("image/") ? detected : undefined) ?? "image/png";
+      return asDisplayable({ [mime]: bytes });
+    },
+  };
+
+  (globalThis as any).Rich = Rich;
 })();
 
 const AsyncFunction = async function () {}.constructor as FunctionConstructor;

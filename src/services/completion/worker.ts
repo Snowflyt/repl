@@ -381,6 +381,105 @@ type SerializerOptions =
 declare function show(value: unknown, options?: ShowOptions): string;
 
 /**
+ * Displays a value immediately in the REPL and returns a promise that resolves when rendering is
+ * complete, similar to Jupyter’s \`display\`.
+ *
+ * The value is rendered as follows:
+ * - Strings are stringified with quotes and escaped like \`JSON.stringify\`.
+ * - DOM nodes are mounted live with a persisted snapshot.
+ * - Values implementing \`Symbol.for("Jupyter.display")\` are rendered as rich MIME bundles.
+ * - Other values are stringified like \`console.log\`.
+ */
+declare function display(value: unknown): Promise<void>;
+
+/**
+ * A Jupyter MIME bundle mapping MIME type to payload.
+ * Matches the runtime renderer capabilities in this REPL.
+ */
+type MimeBundle = Record<string, unknown> & {
+  // Common Jupyter MIME keys
+  "text/plain"?: string;
+  "text/html"?: string;
+  "text/markdown"?: string;
+} & {
+  // Generic support for images; SVG is markup string, others accept strings or bytes
+  [K in \`image/$\{string}\`]?: K extends "image/svg+xml" ? string : string | Uint8Array | ArrayBuffer;
+};;
+
+/**
+ * Helpers for producing rich, notebook-style outputs.
+ * Inspired by Deno.jupyter but exposed under the global \`Rich\` namespace.
+ */
+declare namespace Rich {
+  /**
+   * Symbol alias for the Jupyter display hook.
+   * You can implement
+   *
+   * \`\`\`ts
+   * ({ [Rich.$display]() { return { "text/plain": "Hello" } } })
+   * \`\`\`
+   *
+   * to make any object displayable as a MIME bundle.
+   */
+  const $display: unique symbol;
+
+  /** The shape of any object that can be displayed as a MIME bundle. */
+  interface Displayable {
+    [Rich.$display](): MimeBundle;
+  }
+
+  type ImageMime = \`image/\${string}\`;
+
+  /**
+   * Render HTML via a tagged template.
+   *
+   * @example
+   * Rich.html\`<h1>Hello</h1>\`
+   */
+  function html(strings: TemplateStringsArray, ...values: unknown[]): Displayable;
+
+  /**
+   * Render Markdown via a tagged template. Markdown is converted to HTML by the renderer.
+   *
+   * @example
+   * Rich.md\`# Title\\nSome **bold** text.\`
+   */
+  function md(strings: TemplateStringsArray, ...values: unknown[]): Displayable;
+
+  /**
+   * Render Markdown and mark the input as hidden (Jupyter-style markdown cell).
+   * The resulting MIME bundle includes an internal channel "application/x.repl-hide-input".
+   */
+  function mdBlock(strings: TemplateStringsArray, ...values: unknown[]): Displayable;
+
+  /**
+   * Render an SVG figure via a tagged template.
+   *
+   * @example
+   * Rich.svg\`<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>\`
+   */
+  function svg(strings: TemplateStringsArray, ...values: unknown[]): Displayable;
+
+  /**
+   * Render an image. An optional MIME type may be provided.
+   *
+   * MIME type is determined as follows:
+   * - data URLs → Use declared MIME.
+   * - Inline SVG markup strings → Render as SVG.
+   * - Other strings (URL/path) → Fall back to <img src> without extension guessing.
+   * - Uint8Array/ArrayBuffer → MIME is detected via magic-bytes.js.
+   *
+   * @example
+   * Rich.image("https://picsum.photos/536/354")
+   *
+   * @example
+   * const data = new Uint8Array([...])
+   * Rich.image(data, "image/png")
+   */
+  function image(data: string | Uint8Array | ArrayBuffer, mimeType?: ImageMime): Displayable;
+}
+
+/**
  * Clears the history of all previous inputs and outputs in the REPL.
  */
 declare function clear(): void;

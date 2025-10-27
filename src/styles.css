@@ -23,3 +23,195 @@
     }
   }
 }
+
+/* Opt out Tailwind Preflight only inside rich HTML area.
+   Prefer revert-layer when supported, fallback to revert for common elements. */
+@layer base {
+  @supports (all: revert-layer) {
+    .repl-rich-html,
+    .repl-rich-html :where(*) {
+      all: revert-layer;
+    }
+  }
+  @supports not (all: revert-layer) {
+    /* Older browsers: revert most structural/content elements */
+    .repl-rich-html :where(
+      h1,h2,h3,h4,h5,h6,p,blockquote,pre,code,ul,ol,li,dl,dt,dd,table,thead,tbody,tfoot,tr,th,td,
+      figure,figcaption,hr,small,em,strong,a,img,svg,video,canvas,audio,details,summary
+    ) {
+      all: revert;
+    }
+  }
+}
+
+/* Rich HTML wrapper */
+.repl-rich-html {
+  color: #e5e7eb;
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+.repl-rich-html :where(img, svg, video, canvas, audio) {
+  display: block;
+  max-width: 100%;
+}
+.repl-rich-html svg {
+  display: block;
+}
+.repl-rich-html :where(h1, h2, h3, h4, h5, h6) {
+  color: #f3f4f6;
+  margin: 0.6em 0 0.35em;
+  line-height: 1.25;
+}
+.repl-rich-html h1 {
+  font-size: 1.5rem;
+}
+.repl-rich-html h2 {
+  font-size: 1.375rem;
+}
+.repl-rich-html h3 {
+  font-size: 1.25rem;
+}
+.repl-rich-html h4 {
+  font-size: 1.125rem;
+}
+.repl-rich-html h5 {
+  font-size: 1rem;
+}
+.repl-rich-html h6 {
+  font-size: 0.875rem;
+}
+.repl-rich-html p {
+  margin: 0 0 0.5rem 0;
+}
+.repl-rich-html strong {
+  color: #f9fafb;
+}
+.repl-rich-html em {
+  color: #e5e7eb;
+}
+.repl-rich-html small {
+  color: #9ca3af;
+}
+.repl-rich-html a {
+  color: #93c5fd;
+  text-decoration: none;
+}
+.repl-rich-html a:hover {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+.repl-rich-html hr {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  margin: 0.75rem 0;
+}
+.repl-rich-html :where(ul, ol) {
+  margin: 0 0 0.5rem 1.25rem;
+  padding: 0;
+}
+.repl-rich-html li {
+  margin: 0.25rem 0;
+}
+.repl-rich-html :where(code, kbd, samp, pre) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+.repl-rich-html code {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f9fafb;
+  border-radius: 6px;
+  padding: 0.15em 0.35em;
+}
+.repl-rich-html pre {
+  background: rgba(0, 0, 0, 0.35);
+  color: #e5e7eb;
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow: auto;
+}
+.repl-rich-html pre code {
+  background: transparent;
+  padding: 0;
+}
+.repl-rich-html blockquote {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 3px solid rgba(255, 255, 255, 0.18);
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+}
+.repl-rich-html table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.repl-rich-html thead th {
+  background: rgba(255, 255, 255, 0.06);
+}
+.repl-rich-html :where(th, td) {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+}
+.repl-rich-html tbody tr:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.03);
+}
+.repl-rich-html mark {
+  background: #fde68a;
+  color: #1f2937;
+}
+.repl-rich-html del {
+  color: #fca5a5;
+}
+.repl-rich-html ins {
+  color: #86efac;
+  text-decoration: none;
+}
+.repl-rich-html :where(sup, sub) {
+  line-height: 0;
+}
+.repl-rich-html details {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+.repl-rich-html summary {
+  cursor: pointer;
+  color: #cbd5e1;
+}
+
+.repl-live-placeholder {
+  border: 1px dashed rgba(255, 255, 255, 0.2) !important;
+  background: linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.03),
+      rgba(255, 255, 255, 0.03)
+    ),
+    rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.25rem;
+  min-height: 4.5rem; /* give a bit of presence when no height is set */
+  position: relative;
+  overflow: hidden;
+}
+
+.repl-live-placeholder__inner {
+  max-width: 100%;
+}
+
+.repl-live-placeholder__title {
+  color: #e5e7eb;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.repl-live-placeholder__hint {
+  color: #9ca3af;
+  font-size: 0.85em;
+}

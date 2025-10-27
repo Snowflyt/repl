@@ -4,6 +4,7 @@ import { hookify } from "troza/react";
 
 import type { HistoryEntry } from "../types";
 import type { Sandbox } from "../utils/sandbox";
+import { display } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
 
 import historyStore, { scanHistoryBlock } from "./history";
@@ -217,7 +218,7 @@ const sandboxStore = create({
       // Wait for the next microtask to ensure eager promises are resolved
       await new Promise((resolve) => void Promise.resolve().then(resolve));
 
-      if (Option.isSome(result)) historyStore.appendOutput(show(result.value));
+      if (Option.isSome(result)) await display(result.value);
     } catch (error) {
       if (error instanceof Error && error.message === "REPL: Execution cancelled") {
         // Ignore the error if the execution was cancelled
