@@ -25,7 +25,7 @@ const CompletionDetailPane = forwardRef<HTMLDivElement, CompletionDetailPaneProp
     return (
       <div
         ref={ref}
-        className="fixed z-40 w-[40rem] max-w-[calc(100vw-16px)] rounded-md border border-gray-700/60 bg-[#1a1520]/80 py-3 pr-1 pl-3 text-sm text-gray-200 shadow-xl backdrop-blur-sm"
+        className="fixed z-40 w-160 max-w-[calc(100vw-16px)] rounded-md border border-gray-700/60 bg-[#1a1520]/80 py-3 pr-1 pl-3 text-sm text-gray-200 shadow-xl backdrop-blur-sm"
         style={style}>
         {loading ?
           <div className="flex items-center gap-2 text-gray-400">
@@ -56,7 +56,7 @@ const CompletionDetailPane = forwardRef<HTMLDivElement, CompletionDetailPaneProp
             <div data-docs="1">
               {((sigParts && sigParts.params.length > 0) || detail.detail) && (
                 <div
-                  className="mb-2 font-mono text-xs break-words text-gray-300"
+                  className="mb-2 font-mono text-xs wrap-break-word text-gray-300"
                   title={detail.detail || undefined}>
                   {sigParts && (
                     <>

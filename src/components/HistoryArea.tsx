@@ -635,7 +635,7 @@ const BlockContainer = React.memo<{
     <div className="group relative mb-2" ref={wrapRef}>
       {children}
       {showControls && !isTooCloseToTop && input != null && (
-        <div className="absolute top-0 right-0 z-40 p-0.5">
+        <div className="absolute top-0 right-0 p-0.5">
           <ButtonGroup
             input={input}
             inputAreaRef={inputAreaRef}
@@ -1000,7 +1000,7 @@ const SandboxedHtml = ({ html, liveId }: { html: string; liveId?: string }) => {
     <div ref={wrapRef} className="relative">
       {btnPos && (
         <div
-          className="absolute z-40 -translate-x-full transform"
+          className="absolute -translate-x-full transform"
           style={{ top: btnPos.top, left: btnPos.left }}>
           <div className="flex items-center gap-1">
             <button
