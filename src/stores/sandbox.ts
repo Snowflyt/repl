@@ -1,8 +1,8 @@
-import { Option } from "effect";
 import { create } from "troza";
 import { hookify } from "troza/react";
 
 import type { HistoryEntry } from "../types";
+import { Option } from "../types";
 import type { Sandbox } from "../utils/sandbox";
 import { display } from "../utils/sandbox";
 import { show, showTable } from "../utils/show";
@@ -205,7 +205,7 @@ const sandboxStore = create({
     historyStore.appendInput(code);
 
     try {
-      const result = await Promise.race<Option.Option<unknown>>([
+      const result = await Promise.race<Option<unknown>>([
         sandbox.execute(code),
         new Promise((_, reject) => {
           executionAbortController?.signal.addEventListener("abort", () => {
@@ -218,7 +218,7 @@ const sandboxStore = create({
       // Wait for the next microtask to ensure eager promises are resolved
       await new Promise((resolve) => void Promise.resolve().then(resolve));
 
-      if (Option.isSome(result)) await display(result.value);
+      if (Option.isSome(result)) await display(result._0);
     } catch (error) {
       if (error instanceof Error && error.message === "REPL: Execution cancelled") {
         // Ignore the error if the execution was cancelled
@@ -243,13 +243,13 @@ const sandboxStore = create({
 
     for (let i = 0; i < history.length; i++) {
       const entry = history[i]!;
-      if (entry.type !== "input") continue;
+      if (entry._tag !== "Input") continue;
 
       const { endIndex, shouldRecover } = scanHistoryBlock(history as any, i);
       const oldRelatedEntries: Exclude<HistoryEntry, { type: "input" }>[] = [];
       for (let j = i + 1; j < endIndex; j++) {
         const e = history[j]!;
-        if (e.type !== "input") oldRelatedEntries.push(e);
+        if (e._tag !== "Input") oldRelatedEntries.push(e);
       }
 
       if (!shouldRecover) {
@@ -258,7 +258,7 @@ const sandboxStore = create({
         continue;
       }
 
-      await this.execute(entry.value, false);
+      await this.execute(entry._0.value, false);
     }
 
     this.isExecuting = false;

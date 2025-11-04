@@ -1,9 +1,9 @@
-import { Option } from "effect";
 import { filetypemime } from "magic-bytes.js";
 import * as ts from "typescript";
 
 import historyStore from "../stores/history";
-import type { MimeBundle } from "../types";
+import type { MimeBundle, Option } from "../types";
+import { None, Some } from "../types";
 
 import { show } from "./show";
 
@@ -134,7 +134,7 @@ export async function display(value: unknown): Promise<void> {
       if (bundle) {
         if (
           bundle["application/x.repl-hide-input"] &&
-          historyStore.$get().history[historyStore.$get().history.length - 1]?.type !== "hide-input"
+          historyStore.$get().history[historyStore.$get().history.length - 1]?._tag !== "HideInput"
         )
           historyStore.appendHideInput();
         await historyStore.appendRichOutput(bundle);
@@ -272,7 +272,7 @@ export class Sandbox {
    * @param code The code to execute.
    * @returns
    */
-  async execute(code: string): Promise<Option.Option<unknown>> {
+  async execute(code: string): Promise<Option<unknown>> {
     const sourceFile = ts.createSourceFile(
       "repl.ts",
       code,
@@ -399,7 +399,7 @@ export class Sandbox {
       if (!hadKey || !Object.is(this.#context[key], value)) this.#context[key] = value;
     }
 
-    return "__repl_result___" in result ? Option.some(result.__repl_result___) : Option.none();
+    return "__repl_result___" in result ? Some(result.__repl_result___) : None;
   }
 
   /**
