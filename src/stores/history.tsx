@@ -1,3 +1,4 @@
+import { make } from "kind-adt";
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
 import { match } from "megamatch";
 import { create, get } from "troza";
@@ -7,7 +8,8 @@ import { hookify } from "troza/react";
 // html-minifier-terser relies on Node.js built-ins that are not available in the browser
 // eslint-disable-next-line sonarjs/no-internal-api-use
 import { minify as minifyHTML } from "../../node_modules/html-minifier-terser/dist/htmlminifier.esm.bundle.js";
-import type { HistoryEntry, HistoryEntryLike, MimeBundle } from "../types";
+import type { HistoryEntryLike, MimeBundle } from "../types";
+import { HistoryEntry } from "../types";
 import { show } from "../utils/show";
 
 import sandboxStore from "./sandbox";
@@ -26,7 +28,7 @@ const historyStore = create({
   history: [] as HistoryEntryLike[],
 
   [get("inputHistory")]() {
-    return this.history.filter((entry) => entry.type === "input");
+    return this.history.filter((e) => e._tag === "Input");
   },
 
   clear() {
@@ -34,21 +36,21 @@ const historyStore = create({
   },
 
   appendInput(value: string) {
-    this.history.push({ type: "input", value });
+    this.history.push(HistoryEntry.Input({ value }));
   },
 
   appendHideInput() {
-    this.history.push({ type: "hide-input" });
+    this.history.push(HistoryEntry.HideInput);
   },
 
   appendOutput(...args: [value: string] | [type: "info" | "warn" | "error", value: string]) {
     if (args.length === 1) {
-      this.history.push({ type: "output", value: args[0] });
+      this.history.push(HistoryEntry.Output({ value: args[0] }));
       return;
     }
 
     const [type, value] = args;
-    this.history.push({ type: "output", variant: type, value });
+    this.history.push(HistoryEntry.Output({ variant: type, value }));
   },
 
   async appendRichOutput(bundle: MimeBundle) {
@@ -78,12 +80,12 @@ const historyStore = create({
         } catch (e) {
           // Ignore minification errors
         }
-    this.history.push({ type: "rich-output", bundle });
+    this.history.push(HistoryEntry.RichOutput({ bundle }));
   },
 
   appendError(error: unknown) {
     const message = error instanceof Error ? `${error.name}: ${error.message}` : show(error);
-    this.history.push({ type: "error", value: message });
+    this.history.push(HistoryEntry.Error({ value: message }));
   },
 
   /**
@@ -94,11 +96,11 @@ const historyStore = create({
     const history = this.history;
     if (historyIndex < 0 || historyIndex >= history.length) return;
     const entry = history[historyIndex];
-    if (entry?.type !== "input") return;
+    if (entry?._tag !== "Input") return;
     let end = historyIndex + 1;
     while (end < history.length) {
       const e = history[end]!;
-      if (e.type === "input" || e.type === "recovered-mark") break;
+      if (e._tag === "Input" || e._tag === "RecoveredMark") break;
       end++;
     }
     this.history.splice(historyIndex, end - historyIndex);
@@ -180,48 +182,35 @@ function readBytes(a: string, i: number): [value: Uint8Array, next: number] {
   return [out, end];
 }
 
+const encodeHistoryEntryV2 = match<string, HistoryEntry>()({
+  "Input({ value: _ })": (value) => "i" + writeStr(value),
+  HideInput: () => "h",
+  "Output({ variant: 'info', value: _ })": (value) => "f" + writeStr(value),
+  "Output({ variant: 'warn', value: _ })": (value) => "w" + writeStr(value),
+  "Output({ variant: 'error', value: _ })": (value) => "r" + writeStr(value),
+  "Output({ value: _ })": (value) => "o" + writeStr(value),
+  "RichOutput({ bundle: _ })": (bundle) => {
+    const mime = pickBestMime(bundle) ?? "text/plain";
+    const val = bundle[mime];
+    let flags = 0;
+    const liveId = bundle["application/x.repl-live-id"] as string | undefined;
+    if (typeof liveId === "string") flags |= 1;
+    let result = "j" + writeStr(mime);
+    if (val instanceof Uint8Array) result += "B" + writeBytes(val);
+    else if (val instanceof ArrayBuffer) result += "B" + writeBytes(new Uint8Array(val));
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+    else result += "S" + writeStr(String(val ?? ""));
+    result += String.fromCharCode(flags);
+    if (flags & 1) result += writeStr(liveId!);
+    return result;
+  },
+  "Error({ value: _ })": (value) => "e" + writeStr(value),
+});
 function encodeHistoryV2(history: HistoryEntryLike[]): string {
   let result = "V2";
   for (const entry of history) {
-    if (entry.type === "recovered-mark") continue;
-    switch (entry.type) {
-      case "input": {
-        result += "i" + writeStr(entry.value);
-        break;
-      }
-      case "hide-input": {
-        result += "h";
-        break;
-      }
-      case "output": {
-        const code =
-          entry.variant === "info" ? "f"
-          : entry.variant === "warn" ? "w"
-          : entry.variant === "error" ? "r"
-          : "o";
-        result += code + writeStr(entry.value);
-        break;
-      }
-      case "error": {
-        result += "e" + writeStr(entry.value);
-        break;
-      }
-      case "rich-output": {
-        const mime = pickBestMime(entry.bundle) ?? "text/plain";
-        const val = entry.bundle[mime];
-        let flags = 0;
-        const liveId = entry.bundle["application/x.repl-live-id"] as string | undefined;
-        if (typeof liveId === "string") flags |= 1;
-        result += "j" + writeStr(mime);
-        if (val instanceof Uint8Array) result += "B" + writeBytes(val);
-        else if (val instanceof ArrayBuffer) result += "B" + writeBytes(new Uint8Array(val));
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        else result += "S" + writeStr(String(val ?? ""));
-        result += String.fromCharCode(flags);
-        if (flags & 1) result += writeStr(liveId!);
-        break;
-      }
-    }
+    if (entry._tag === "RecoveredMark") continue;
+    result += encodeHistoryEntryV2(entry);
   }
   return result;
 }
@@ -236,11 +225,11 @@ function decodeHistoryV2(data: string): HistoryEntry[] {
       case "i": {
         const [s, j] = readStr(data, i);
         i = j;
-        result.push({ type: "input", value: s });
+        result.push(HistoryEntry.Input({ value: s }));
         break;
       }
       case "h": {
-        result.push({ type: "hide-input" });
+        result.push(HistoryEntry.HideInput);
         break;
       }
       case "o":
@@ -249,21 +238,22 @@ function decodeHistoryV2(data: string): HistoryEntry[] {
       case "r": {
         const [s, j] = readStr(data, i);
         i = j;
-        result.push({
-          type: "output",
-          variant:
-            code === "o" ? undefined
-            : code === "f" ? "info"
-            : code === "w" ? "warn"
-            : "error",
-          value: s,
-        });
+        result.push(
+          HistoryEntry.Output({
+            variant:
+              code === "o" ? undefined
+              : code === "f" ? "info"
+              : code === "w" ? "warn"
+              : "error",
+            value: s,
+          }),
+        );
         break;
       }
       case "e": {
         const [s, j] = readStr(data, i);
         i = j;
-        result.push({ type: "error", value: s });
+        result.push(HistoryEntry.Error({ value: s }));
         break;
       }
       case "j": {
@@ -286,7 +276,7 @@ function decodeHistoryV2(data: string): HistoryEntry[] {
           i = j3;
           bundle["application/x.repl-live-id"] = live;
         }
-        result.push({ type: "rich-output", bundle });
+        result.push(HistoryEntry.RichOutput({ bundle }));
         break;
       }
       default:
@@ -300,12 +290,12 @@ function decodeHistoryV2(data: string): HistoryEntry[] {
 
 // Backward-compat decoder for legacy (v1) JSON-encoded entries
 const decodeHistoryEntryV1 = match<HistoryEntry, readonly [string, string]>()({
-  "['i', _]": (value) => ({ type: "input", value }),
-  "['f', _]": (value) => ({ type: "output", variant: "info", value }),
-  "['w', _]": (value) => ({ type: "output", variant: "warn", value }),
-  "['r', _]": (value) => ({ type: "output", variant: "error", value }),
-  "['o', _]": (value) => ({ type: "output", value }),
-  "['e', _]": (value) => ({ type: "error", value }),
+  "['i', _]": (value) => HistoryEntry.Input({ value }),
+  "['f', _]": (value) => HistoryEntry.Output({ variant: "info", value }),
+  "['w', _]": (value) => HistoryEntry.Output({ variant: "warn", value }),
+  "['r', _]": (value) => HistoryEntry.Output({ variant: "error", value }),
+  "['o', _]": (value) => HistoryEntry.Output({ value }),
+  "['e', _]": (value) => HistoryEntry.Error({ value }),
   "[_, *]": (format) => {
     throw new Error(`Invalid history entry format '${format}'`);
   },
@@ -336,7 +326,7 @@ if (historyParam)
       );
     } else {
       historyStore.history = (history as typeof historyStore.history).concat([
-        { type: "recovered-mark" },
+        make<HistoryEntryLike>().RecoveredMark,
       ]);
     }
   } catch {
@@ -355,12 +345,12 @@ export function scanHistoryBlock(
 ): { endIndex: number; shouldRecover: boolean } {
   const start = startIndex;
   const entry = history[start];
-  if (entry?.type !== "input") return { endIndex: startIndex + 1, shouldRecover: false };
+  if (entry?._tag !== "Input") return { endIndex: startIndex + 1, shouldRecover: false };
 
   // REPL commands are not re-executed
-  if (isReplCommand(entry.value)) {
+  if (isReplCommand(entry._0.value)) {
     let j = start + 1;
-    while (j < history.length && history[j]!.type !== "input") j++;
+    while (j < history.length && history[j]!._tag !== "Input") j++;
     return { endIndex: j, shouldRecover: false };
   }
 
@@ -368,10 +358,12 @@ export function scanHistoryBlock(
   let shouldRecover = true;
   while (j < history.length) {
     const next = history[j]!;
-    if (next.type === "input") break;
+    if (next._tag === "Input") break;
     if (
-      next.type === "error" ||
-      (next.type === "output" && next.variant === "info" && next.value === "Execution cancelled")
+      next._tag === "Error" ||
+      (next._tag === "Output" &&
+        next._0.variant === "info" &&
+        next._0.value === "Execution cancelled")
     )
       shouldRecover = false;
     j++;
@@ -391,7 +383,7 @@ export function filterHistoryForRerun(history: HistoryEntryLike[]): HistoryEntry
   let i = 0;
   while (i < history.length) {
     const entry = history[i]!;
-    if (entry.type !== "input") {
+    if (entry._tag !== "Input") {
       result.push(entry);
       i++;
       continue;

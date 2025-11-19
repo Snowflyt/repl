@@ -538,8 +538,8 @@ const InputArea: React.FC<InputAreaProps> = ({
 
     const targetEntry = inputHistory[inputHistoryIndex];
     if (targetEntry) {
-      setInput(targetEntry.value);
-      updateRows(targetEntry.value);
+      setInput(targetEntry._0.value);
+      updateRows(targetEntry._0.value);
       refocus();
     }
   }, [inputHistory, inputHistoryIndex, updateRows, refocus, input]);
@@ -575,13 +575,13 @@ const InputArea: React.FC<InputAreaProps> = ({
         const snippets: string[] = [];
         let pending: string | null = null;
         for (const e of historyRef.current) {
-          if (e.type === "input") {
+          if (e._tag === "Input") {
             if (pending) snippets.push(pending);
-            pending = isReplCommand(e.value) ? null : e.value;
-          } else if (e.type === "error") {
+            pending = isReplCommand(e._0.value) ? null : e._0.value;
+          } else if (e._tag === "Error") {
             pending = null;
-          } else if (e.type === "output") {
-            if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
+          } else if (e._tag === "Output") {
+            if (e._0.variant === "info" && e._0.value === "Execution cancelled") pending = null;
           }
         }
         if (pending) snippets.push(pending);
@@ -603,17 +603,16 @@ const InputArea: React.FC<InputAreaProps> = ({
         // Keep worker history up-to-date for accurate types
         const snippets: string[] = [];
         let pending: string | null = null;
-        for (const e of historyRef.current) {
-          if (e.type === "input") {
+        for (const e of historyRef.current)
+          if (e._tag === "Input") {
             if (pending) snippets.push(pending);
             // Skip REPL commands (e.g., :type)
-            pending = isReplCommand(e.value) ? null : e.value;
-          } else if (e.type === "error") {
+            pending = isReplCommand(e._0.value) ? null : e._0.value;
+          } else if (e._tag === "Error") {
             pending = null;
-          } else if (e.type === "output") {
-            if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
+          } else if (e._tag === "Output") {
+            if (e._0.variant === "info" && e._0.value === "Execution cancelled") pending = null;
           }
-        }
         if (pending) snippets.push(pending);
         await completionService.updateHistory(snippets);
         const { type } = await completionService.getTypeOf(expr);
@@ -652,17 +651,16 @@ const InputArea: React.FC<InputAreaProps> = ({
   const computeSuccessSnippets = useCallback((): string[] => {
     const result: string[] = [];
     let pending: string | null = null;
-    for (const e of historyRef.current) {
-      if (e.type === "input") {
+    for (const e of historyRef.current)
+      if (e._tag === "Input") {
         if (pending) result.push(pending);
         // Skip REPL commands (e.g., :type)
-        pending = isReplCommand(e.value) ? null : e.value;
-      } else if (e.type === "error") {
+        pending = isReplCommand(e._0.value) ? null : e._0.value;
+      } else if (e._tag === "Error") {
         pending = null;
-      } else if (e.type === "output") {
-        if (e.variant === "info" && e.value === "Execution cancelled") pending = null;
+      } else if (e._tag === "Output") {
+        if (e._0.variant === "info" && e._0.value === "Execution cancelled") pending = null;
       }
-    }
     if (pending) result.push(pending);
     return result;
   }, []);

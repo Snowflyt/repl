@@ -3,6 +3,7 @@ import { AnsiUp } from "ansi_up";
 import { clsx } from "clsx";
 import { transparentize } from "color2k";
 import domtoimage from "dom-to-image-more";
+import type { Tagged } from "kind-adt";
 import { Marked } from "marked";
 import { match } from "megamatch";
 import * as React from "react";
@@ -190,7 +191,7 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
 
       {history.map((entry, index) =>
-        entry.type === "recovered-mark" ?
+        entry._tag === "RecoveredMark" ?
           <RecoveredMark key={index} />
         : <HistoryItem
             key={index}
@@ -232,7 +233,7 @@ const HistoryItem = React.memo<{
   onJumpToInputHistory,
 }) {
   // If this is an input immediately followed by a hide-input mark, skip rendering the input content
-  if (entry.type === "input" && history[index + 1]?.type === "hide-input") return null;
+  if (entry._tag === "Input" && history[index + 1]?._tag === "HideInput") return null;
 
   // Determine if current entry should show controls and which input they operate on
   let showControls = false;
@@ -240,10 +241,10 @@ const HistoryItem = React.memo<{
   let onJump: (() => void) | undefined;
   let onDelete: (() => void) | undefined;
 
-  if (entry.type === "input") {
+  if (entry._tag === "Input") {
     // Regular input block
     showControls = true;
-    controlsInput = entry.value;
+    controlsInput = entry._0.value;
     const inputEntry = entry;
     onJump = (() => {
       const index = historyStore.$get().inputHistory.findIndex((e) => e === inputEntry);
@@ -253,13 +254,13 @@ const HistoryItem = React.memo<{
       const index = historyStore.$get().history.indexOf(inputEntry);
       return () => historyStore.removeInputBlockAt(index);
     })();
-  } else if (entry.type === "output" || entry.type === "rich-output") {
+  } else if (entry._tag === "Output" || entry._tag === "RichOutput") {
     // If current entry is the first visible output after a hidden input, attach controls for that input
     const i = index;
     let cursor = i - 1;
     while (cursor >= 0) {
       const e = history[cursor]!;
-      if (e.type === "input") break;
+      if (e._tag === "Input") break;
       if ((e as any).type === "recovered-mark") {
         cursor = -1;
         break;
@@ -268,14 +269,14 @@ const HistoryItem = React.memo<{
     }
     if (
       cursor >= 0 &&
-      history[cursor]?.type === "input" &&
-      history[cursor + 1]?.type === "hide-input" &&
+      history[cursor]?._tag === "Input" &&
+      history[cursor + 1]?._tag === "HideInput" &&
       i === cursor + 2
     ) {
       const inputIndex = cursor;
-      const inputEntry = history[inputIndex] as Extract<HistoryEntry, { type: "input" }>;
+      const inputEntry = history[inputIndex] as Extract<HistoryEntry, Tagged<"Input">>;
       showControls = true;
-      controlsInput = inputEntry.value;
+      controlsInput = inputEntry._0.value;
       onJump = () => {
         const index = historyStore.$get().inputHistory.findIndex((e) => e === inputEntry);
         onJumpToInputHistory?.(index);
@@ -286,31 +287,31 @@ const HistoryItem = React.memo<{
 
   // Render content and wrap with a container that places the ButtonGroup consistently
   const content = match(entry, {
-    "{ type: 'input', value: _ }": (value) => <InputMessage value={value} />,
-    "{ type: 'hide-input' }": () => null,
-    "{ type: 'rich-output', bundle: _ }": (bundle) => <RichOutput bundle={bundle} />,
-    "{ type: 'output', variant: 'info', value: _ }": (value) => (
+    "Input({ value: _ })": (value) => <InputMessage value={value} />,
+    "HideInput()": () => null,
+    "RichOutput({ bundle: _ })": (bundle) => <RichOutput bundle={bundle} />,
+    "Output({ variant: 'info', value: _ })": (value) => (
       <OutputMessage
         value={value}
         icon={<Icon icon="material-symbols:info-outline" className="text-blue-100" />}
       />
     ),
-    "{ type: 'output', variant: 'warn', value: _ }": (value) => (
+    "Output({ variant: 'warn', value: _ })": (value) => (
       <OutputMessage
         value={value}
         icon={<Icon icon="carbon:warning-alt-filled" className="text-[#ffc107]" />}
         backgroundColor="#ffc107"
       />
     ),
-    "{ type: 'output', variant: 'error', value: _ }": (value) => (
+    "Output({ variant: 'error', value: _ })": (value) => (
       <OutputMessage
         value={value}
         icon={<Icon icon="gridicons:cross-circle" className="mt-0.5 text-[#dc3545]" />}
         backgroundColor="#dc3545"
       />
     ),
-    "{ type: 'output', value: _ }": (value) => <OutputMessage value={value} />,
-    "{ type: 'error', value: _ }": (value) => <ErrorMessage value={value} />,
+    "Output({ value: _ })": (value) => <OutputMessage value={value} />,
+    "Error({ value: _ })": ({ value }) => <ErrorMessage value={value} />,
   });
 
   if (content == null) return null;
@@ -332,7 +333,7 @@ const RecoveredMark = React.memo(function RecoveredMark() {
   const handleRerunAll = useCallback(() => {
     const recoveredMarkIndex = historyStore
       .$get()
-      .history.findIndex(({ type }) => type === "recovered-mark");
+      .history.findIndex((e) => e._tag === "RecoveredMark");
     if (recoveredMarkIndex === -1) return;
     const history = historyStore.$get().history.slice(0, recoveredMarkIndex) as HistoryEntry[];
     if (!history.length) return;
