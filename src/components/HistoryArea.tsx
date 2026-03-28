@@ -311,7 +311,7 @@ const HistoryItem = React.memo<{
       />
     ),
     "Output({ value: _ })": (value) => <OutputMessage value={value} />,
-    "Error({ value: _ })": ({ value }) => <ErrorMessage value={value} />,
+    "Error({ value: _ })": (value) => <ErrorMessage value={value} />,
   });
 
   if (content == null) return null;
