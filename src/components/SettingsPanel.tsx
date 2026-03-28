@@ -10,7 +10,7 @@ import settingsStore, { useSettingsStore } from "../stores/settings";
 import Switch from "./Switch";
 
 export interface SettingsPanelProps {
-  onClose?: () => void;
+  onClose?: (() => void) | undefined;
 }
 
 const SettingsPanel = React.memo<SettingsPanelProps>(function SettingsPanel({ onClose }) {

@@ -7,7 +7,7 @@ import { jsdoc } from "eslint-plugin-jsdoc";
 import prettierRecommended from "eslint-plugin-prettier/recommended";
 import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
-import reactRefresh from "eslint-plugin-react-refresh";
+import { reactRefresh } from "eslint-plugin-react-refresh";
 import sonarjs from "eslint-plugin-sonarjs";
 import sortDestructureKeys from "eslint-plugin-sort-destructure-keys";
 import globals from "globals";
@@ -21,11 +21,13 @@ export default defineConfig(
   react.configs.flat.recommended,
   react.configs.flat["jsx-runtime"],
   reactHooks.configs.flat["recommended-latest"],
-  reactRefresh.configs.vite,
-  /** @type {import("eslint").Linter.Config} */ (importX.flatConfigs.recommended),
-  /** @type {import("eslint").Linter.Config} */ (importX.flatConfigs.typescript),
+  reactRefresh.configs.vite(),
+  importX.flatConfigs.recommended,
+  importX.flatConfigs.typescript,
   prettierRecommended,
-  sonarjs.configs.recommended,
+  /** @type {import("eslint").Linter.Config} */ (
+    /** @type {NonNullable<typeof sonarjs.configs>} */ (sonarjs.configs).recommended
+  ),
   {
     plugins: {
       react,

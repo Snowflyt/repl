@@ -96,12 +96,10 @@ const InputArea: React.FC<InputAreaProps> = ({
   const [loadingSig, setLoadingSig] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   // Cache for completion details to avoid flicker and redundant worker calls
-  const detailCacheRef = useRef<Map<string, { detail?: string; documentation?: string }>>(
-    new Map(),
-  );
+  const detailCacheRef = useRef(new Map());
   const MAX_DETAIL_CACHE = 400;
   // Cache for rendered HTML of documentation to avoid parsing on hot path
-  const docHtmlCacheRef = useRef<Map<string, string>>(new Map());
+  const docHtmlCacheRef = useRef(new Map());
   const [docHtmlVersion, setDocHtmlVersion] = useState(0); // trigger re-render when HTML gets ready
   // Schedule heavy work (like markdown parse) off the hot render path
   const scheduleIdle = useCallback((fn: () => void) => {
@@ -804,7 +802,10 @@ const InputArea: React.FC<InputAreaProps> = ({
       const reqCode = tf ? tf.code : code;
       const reqPos = tf ? tf.pos : cursor;
       void completionService
-        .getDetail(reqCode, reqPos, { name: item.label, source: item.source })
+        .getDetail(reqCode, reqPos, {
+          name: item.label,
+          ...(item.detail !== undefined ? { source: item.detail } : {}),
+        })
         .then((d) => {
           if (token !== detailSeqRef.current) return; // Stale sequence
           if (gen !== requestGenRef.current) return; // Invalidated generation
@@ -1292,8 +1293,10 @@ const InputArea: React.FC<InputAreaProps> = ({
                           : undefined;
                         const detail = {
                           detail: it.signature,
-                          documentation: it.documentation,
-                          sigParts,
+                          ...(it.documentation !== undefined ?
+                            { documentation: it.documentation }
+                          : {}),
+                          ...(sigParts !== undefined ? { sigParts } : {}),
                         };
                         setCallDetail(detail);
                         // Pre-render docs HTML

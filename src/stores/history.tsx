@@ -240,11 +240,10 @@ function decodeHistoryV2(data: string): HistoryEntry[] {
         i = j;
         result.push(
           HistoryEntry.Output({
-            variant:
-              code === "o" ? undefined
-              : code === "f" ? "info"
-              : code === "w" ? "warn"
-              : "error",
+            ...(code === "o" ? {}
+            : code === "f" ? { variant: "info" }
+            : code === "w" ? { variant: "warn" }
+            : { variant: "error" }),
             value: s,
           }),
         );

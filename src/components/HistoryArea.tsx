@@ -27,8 +27,8 @@ import SettingsPanel from "./SettingsPanel";
 const ansi_up = new AnsiUp();
 
 interface HistoryAreaProps {
-  inputAreaRef?: React.RefObject<InputAreaRef | null>;
-  onJumpToInputHistory?: (index: number) => void;
+  inputAreaRef?: React.RefObject<InputAreaRef | null> | undefined;
+  onJumpToInputHistory?: ((index: number) => void) | undefined;
 }
 
 const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHistory }) => {
@@ -37,7 +37,7 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
 
   const hasScrollbar = useHasScrollbar(historyAreaRef, [history]);
   const scrollbarWidth = useScrollbarWidth();
-  const [notificationBottom, setNotificationBottom] = useState<number>(16);
+  const [notificationBottom, setNotificationBottom] = useState(16);
 
   // Recalculate notification bottom offset so it doesn't overlap the InputArea (which sits below HistoryArea)
   useEffect(() => {
@@ -103,13 +103,13 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
           kind: "progress",
           title: "Auto type acquisition",
           message: msg,
-          progress: { mode: "indeterminate", note: undefined },
+          progress: { mode: "indeterminate" },
           dismissible: true,
         });
       } else if (ev.phase === "progress") {
         const files = typeof ev.filesReceived === "number" ? ev.filesReceived : undefined;
         notificationsStore.update("ata-progress", {
-          progress: { mode: "indeterminate", note: files ? `${files} files` : undefined },
+          progress: { mode: "indeterminate", ...(files ? { note: `${files} files` } : {}) },
         });
       } else {
         // Remove progress toast
@@ -146,13 +146,13 @@ const HistoryArea: React.FC<HistoryAreaProps> = ({ inputAreaRef, onJumpToInputHi
           kind: "progress",
           title: "Downloading TypeScript lib files",
           message: "Preparing standard library types…",
-          progress: { mode: "indeterminate", note: undefined },
+          progress: { mode: "indeterminate" },
           dismissible: true,
         });
       } else if (ev.phase === "progress") {
         const files = typeof ev.filesReceived === "number" ? ev.filesReceived : undefined;
         notificationsStore.update("tslib-progress", {
-          progress: { mode: "indeterminate", note: files ? `${files} files` : undefined },
+          progress: { mode: "indeterminate", ...(files ? { note: `${files} files` } : {}) },
         });
       } else {
         notificationsStore.remove("tslib-progress");
@@ -221,9 +221,9 @@ const HistoryItem = React.memo<{
   entry: HistoryEntry;
   index: number;
   history: HistoryEntry[];
-  inputAreaRef?: React.RefObject<InputAreaRef | null>;
-  historyAreaRef?: React.RefObject<HTMLDivElement | null>;
-  onJumpToInputHistory?: (index: number) => void;
+  inputAreaRef?: React.RefObject<InputAreaRef | null> | undefined;
+  historyAreaRef?: React.RefObject<HTMLDivElement | null> | undefined;
+  onJumpToInputHistory?: ((index: number) => void) | undefined;
 }>(function HistoryItem({
   entry,
   history,
@@ -371,9 +371,9 @@ let openMenuId: string | null = null;
 
 const ButtonGroup = React.memo<{
   input: string;
-  inputAreaRef?: React.RefObject<InputAreaRef | null>;
-  onJump?: () => void;
-  onDelete?: () => void;
+  inputAreaRef?: React.RefObject<InputAreaRef | null> | undefined;
+  onJump?: (() => void) | undefined;
+  onDelete?: (() => void) | undefined;
 }>(function ButtonGroup({ input, inputAreaRef, onDelete, onJump }) {
   const [copied, setCopied] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -592,11 +592,11 @@ const InputMessage = React.memo<{ value: string }>(function InputMessage({ value
 // Shared wrapper for placing ButtonGroup consistently
 const BlockContainer = React.memo<{
   children: React.ReactNode;
-  historyAreaRef?: React.RefObject<HTMLDivElement | null>;
-  input?: string;
-  inputAreaRef?: React.RefObject<InputAreaRef | null>;
-  onDelete?: () => void;
-  onJump?: () => void;
+  historyAreaRef?: React.RefObject<HTMLDivElement | null> | undefined;
+  input?: string | undefined;
+  inputAreaRef?: React.RefObject<InputAreaRef | null> | undefined;
+  onDelete?: (() => void) | undefined;
+  onJump?: (() => void) | undefined;
   showControls?: boolean;
 }>(function BlockContainer({
   children,
@@ -804,7 +804,7 @@ const RichOutput = React.memo<{ bundle: MimeBundle }>(function RichOutput({ bund
   return <ANSIText value={String(value)} className="mt-1 break-all whitespace-pre-wrap" />;
 });
 
-const SandboxedHtml = ({ html, liveId }: { html: string; liveId?: string }) => {
+const SandboxedHtml = ({ html, liveId }: { html: string; liveId?: string | undefined }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [btnPos, setBtnPos] = useState<{ top: number; left: number } | null>(null);

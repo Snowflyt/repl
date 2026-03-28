@@ -4,7 +4,7 @@ interface UseInOutAnimationOptions {
   /** Duration in ms, should match CSS animation duration. */
   duration: number;
   /** Called when animation completes and component should unmount. */
-  onClose?: () => void;
+  onClose?: (() => void) | undefined;
 }
 
 /**

@@ -17,44 +17,45 @@ const kindIcon: Record<string, string> = {
 const cardBase =
   "pointer-events-auto rounded-md border border-gray-700/60 bg-[#1a1520]/85 text-gray-200 shadow-lg backdrop-blur-md";
 
-const ProgressBar = React.memo<{ mode: "determinate" | "indeterminate"; value?: number }>(
-  function ProgressBar({ mode, value }) {
-    if (mode === "determinate") {
-      const pct = Math.max(0, Math.min(100, Math.round((value ?? 0) * 100)));
-      return (
-        <div className="mt-2 h-1.5 w-full overflow-hidden rounded bg-white/10">
-          <div
-            className="h-full rounded bg-linear-to-r from-[#9c6bff] via-[#7aa2ff] to-[#6affb0]"
-            style={{ width: pct + "%" }}
-          />
-        </div>
-      );
-    }
-
+const ProgressBar = React.memo<{
+  mode: "determinate" | "indeterminate";
+  value?: number | undefined;
+}>(function ProgressBar({ mode, value }) {
+  if (mode === "determinate") {
+    const pct = Math.max(0, Math.min(100, Math.round((value ?? 0) * 100)));
     return (
       <div className="mt-2 h-1.5 w-full overflow-hidden rounded bg-white/10">
         <div
-          className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded bg-linear-to-r from-[#9c6bff] via-[#7aa2ff] to-[#6affb0]"
-          style={{ transform: "translateX(-100%)" }}
+          className="h-full rounded bg-linear-to-r from-[#9c6bff] via-[#7aa2ff] to-[#6affb0]"
+          style={{ width: pct + "%" }}
         />
-
-        <style>
-          {"@keyframes slide {\n" +
-            "  0% {\n" +
-            "    transform: translateX(-100%);\n" +
-            "  }\n" +
-            "  50% {\n" +
-            "    transform: translateX(200%);\n" +
-            "  }\n" +
-            "  100% {\n" +
-            "    transform: translateX(200%);\n" +
-            "  }\n" +
-            "}"}
-        </style>
       </div>
     );
-  },
-);
+  }
+
+  return (
+    <div className="mt-2 h-1.5 w-full overflow-hidden rounded bg-white/10">
+      <div
+        className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded bg-linear-to-r from-[#9c6bff] via-[#7aa2ff] to-[#6affb0]"
+        style={{ transform: "translateX(-100%)" }}
+      />
+
+      <style>
+        {"@keyframes slide {\n" +
+          "  0% {\n" +
+          "    transform: translateX(-100%);\n" +
+          "  }\n" +
+          "  50% {\n" +
+          "    transform: translateX(200%);\n" +
+          "  }\n" +
+          "  100% {\n" +
+          "    transform: translateX(200%);\n" +
+          "  }\n" +
+          "}"}
+      </style>
+    </div>
+  );
+});
 
 const NotificationCard = React.memo<{
   id: string;
