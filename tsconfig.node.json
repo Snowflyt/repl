@@ -13,6 +13,7 @@
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,
+    "rootDir": ".",
 
     /* Linting */
     "strict": true,

@@ -900,7 +900,7 @@ async function ensureEnv(): Promise<void> {
   envInitPromise = (async () => {
     const compilerOptions: ts.CompilerOptions = {
       target: ts.ScriptTarget.ESNext,
-      lib: ["ESNext", "DOM", "DOM.Iterable"],
+      lib: ["ESNext", "DOM"],
       allowJs: true,
       checkJs: false,
       skipLibCheck: true,
