@@ -40,6 +40,7 @@
     "react-dom": "^19.2.4",
     "semver": "^7.7.4",
     "showify": "^0.2.7",
+    "spin-delay": "^2.0.1",
     "troza": "^0.2.2",
     "typescript": "^6.0.2"
   },

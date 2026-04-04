@@ -9,6 +9,7 @@ export interface CompletionDetailPaneProps {
   detail: { detail?: string; documentation?: string } | null;
   docHtml?: string;
   loading: boolean;
+  pending?: boolean;
   style?: CSSProperties;
   // Optional structured signature parts to allow UI-level highlighting of active parameter
   sigParts?: {
@@ -21,7 +22,7 @@ export interface CompletionDetailPaneProps {
 }
 
 const CompletionDetailPane = forwardRef<HTMLDivElement, CompletionDetailPaneProps>(
-  function CompletionDetailPane({ detail, docHtml, loading, sigParts, style }, ref) {
+  function CompletionDetailPane({ detail, docHtml, loading, pending, sigParts, style }, ref) {
     return (
       <div
         ref={ref}
@@ -32,6 +33,8 @@ const CompletionDetailPane = forwardRef<HTMLDivElement, CompletionDetailPaneProp
             <Icon icon="svg-spinners:3-dots-fade" className="h-4 w-4" />
             <span>Loading details…</span>
           </div>
+        : pending && !detail ?
+          <div className="h-5" />
         : detail && (detail.detail || detail.documentation) ?
           <div className="repl-scroll max-h-[50vh] overflow-auto text-gray-200">
             {/* Scoped override to remove hljs background across the detail area */}

@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useSpinDelay } from "spin-delay";
 
 import type { CompletionItem } from "../services/completion/service";
 import { completionService } from "../services/completion/service";
@@ -21,6 +22,9 @@ import { isMacOS } from "../utils/platform";
 
 import CompletionDetailPane from "./CompletionDetailPane";
 import CompletionPopup from "./CompletionPopup";
+
+const LOADING_DELAY = 150;
+const LOADING_MIN_DURATION = 120;
 
 export interface InputAreaProps {
   ref?: React.Ref<InputAreaRef>;
@@ -93,8 +97,16 @@ const InputArea: React.FC<InputAreaProps> = ({
       activeIndex?: number;
     };
   } | null>(null);
-  const [loadingSig, setLoadingSig] = useState(false);
-  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [isDetailPending, setIsDetailPending] = useState(false);
+  const [isSignaturePending, setIsSignaturePending] = useState(false);
+  const isDetailLoadingVisible = useSpinDelay(isDetailPending, {
+    delay: LOADING_DELAY,
+    minDuration: LOADING_MIN_DURATION,
+  });
+  const isSignatureLoadingVisible = useSpinDelay(isSignaturePending, {
+    delay: LOADING_DELAY,
+    minDuration: LOADING_MIN_DURATION,
+  });
   // Cache for completion details to avoid flicker and redundant worker calls
   const detailCacheRef = useRef(new Map());
   const MAX_DETAIL_CACHE = 400;
@@ -137,7 +149,8 @@ const InputArea: React.FC<InputAreaProps> = ({
     }
     setSuggestions(null);
     setSelectedDetail(null);
-    setLoadingDetail(false);
+    setIsDetailPending(false);
+    setIsSignaturePending(false);
     dotFastRef.current = false;
     // Clear input
     setInput("");
@@ -203,10 +216,10 @@ const InputArea: React.FC<InputAreaProps> = ({
       setPopupPos(null);
       setPopupReady(false);
       setSelectedDetail(null);
-      setLoadingDetail(false);
+      setIsDetailPending(false);
       // Hide signature help when a suggestions session starts
       setCallDetail(null);
-      setLoadingSig(false);
+      setIsSignaturePending(false);
     }
     hadSuggestionsRef.current = has;
   }, [suggestions]);
@@ -450,7 +463,8 @@ const InputArea: React.FC<InputAreaProps> = ({
     popupReady,
     selIndex,
     selectedDetail,
-    loadingDetail,
+    isDetailLoadingVisible,
+    isDetailPending,
     docHtmlVersion,
     popupPos,
   ]);
@@ -509,7 +523,7 @@ const InputArea: React.FC<InputAreaProps> = ({
       window.visualViewport?.removeEventListener("scroll", onVVScroll);
       ro?.disconnect();
     };
-  }, [callDetail, caretPos, loadingSig, docHtmlVersion]);
+  }, [callDetail, caretPos, isSignatureLoadingVisible, docHtmlVersion]);
 
   /* History */
   const { inputHistory } = useHistoryStore();
@@ -563,7 +577,8 @@ const InputArea: React.FC<InputAreaProps> = ({
       }
       setSuggestions(null);
       setSelectedDetail(null);
-      setLoadingDetail(false);
+      setIsDetailPending(false);
+      setIsSignaturePending(false);
 
       // Handle :check / :c command (print the value type of an expression)
       if (trimmed.startsWith(":check ") || trimmed.startsWith(":c ")) {
@@ -716,7 +731,7 @@ const InputArea: React.FC<InputAreaProps> = ({
       setSuggestions(mapped);
       setSelIndex(0);
       setSelectedDetail(null);
-      setLoadingDetail(false);
+      setIsDetailPending(false);
       updateCaretPosition();
     },
     [updateCaretPosition, settings.editor.intellisense, transformForTypeMode, getCheckExprStart],
@@ -776,7 +791,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     const cached = detailCacheRef.current.get(key);
     if (cached) {
       setSelectedDetail(cached);
-      setLoadingDetail(false);
+      setIsDetailPending(false);
       // Ensure rendered HTML is prepared asynchronously if missing
       const doc = cached.documentation;
       if (doc && !docHtmlCacheRef.current.has(key)) {
@@ -796,7 +811,7 @@ const InputArea: React.FC<InputAreaProps> = ({
     const cursor = inputAreaRef.current.selectionStart;
     const token = ++detailSeqRef.current;
     const gen = requestGenRef.current;
-    setLoadingDetail(true);
+    setIsDetailPending(true);
     detailDebounceRef.current = window.setTimeout(() => {
       const tf = transformForTypeMode(code, cursor);
       const reqCode = tf ? tf.code : code;
@@ -832,10 +847,10 @@ const InputArea: React.FC<InputAreaProps> = ({
         })
         .finally(() => {
           if (token === detailSeqRef.current && gen === requestGenRef.current)
-            setLoadingDetail(false);
+            setIsDetailPending(false);
         });
     }, 120);
-  }, [suggestions, selIndex, md, scheduleIdle, transformForTypeMode]);
+  }, [md, scheduleIdle, selIndex, suggestions, transformForTypeMode]);
 
   // Current selected item's cache key (for doc HTML lookup)
   const currentDetailKey = useMemo(() => {
@@ -1269,7 +1284,8 @@ const InputArea: React.FC<InputAreaProps> = ({
                   setSuggestions(null);
                   dotFastRef.current = false;
                   // Attempt signature help in call context when list is closed
-                  setLoadingSig(true);
+                  const keepSignatureVisible = !!callDetail;
+                  if (keepSignatureVisible) setIsSignaturePending(true);
                   void completionService
                     .getSignatureHelp(reqCode, reqPos)
                     .then((res) => {
@@ -1317,7 +1333,7 @@ const InputArea: React.FC<InputAreaProps> = ({
                         setCallDetail(null);
                       }
                     })
-                    .finally(() => setLoadingSig(false));
+                    .finally(() => setIsSignaturePending(false));
                   return;
                 }
                 if (action.kind === "open" || action.kind === "refresh") {
@@ -1422,7 +1438,8 @@ const InputArea: React.FC<InputAreaProps> = ({
             createPortal(
               <CompletionDetailPane
                 ref={detailRef}
-                loading={loadingDetail}
+                loading={isDetailLoadingVisible}
+                pending={isDetailPending}
                 detail={selectedDetail}
                 docHtml={docHtmlCacheRef.current.get(currentDetailKey ?? "") ?? ""}
                 style={{
@@ -1443,7 +1460,8 @@ const InputArea: React.FC<InputAreaProps> = ({
             createPortal(
               <CompletionDetailPane
                 ref={sigRef}
-                loading={loadingSig}
+                loading={isSignatureLoadingVisible}
+                pending={isSignaturePending}
                 detail={callDetail}
                 sigParts={callDetail.sigParts ?? null}
                 docHtml={docHtmlCacheRef.current.get(
