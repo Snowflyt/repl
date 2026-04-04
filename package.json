@@ -11,7 +11,12 @@
     "lint": "eslint \"**/*.{js,jsx,ts,tsx}\" \"*.{cjs,mjs,cts,mts}\" --no-error-on-unmatched-pattern --report-unused-disable-directives-severity error --max-warnings 0",
     "lint:fix": "eslint --fix \"**/*.{js,jsx,ts,tsx}\" \"*.{cjs,mjs,cts,mts}\" --no-error-on-unmatched-pattern --report-unused-disable-directives-severity error --max-warnings 0",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit --composite false -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit --composite false -p tsconfig.app.json",
+    "test": "vitest run --environment happy-dom",
+    "test:cov": "vitest run --environment happy-dom --coverage --coverage.reporter=text --coverage.reporter=lcov --coverage.include \"src/**/*.ts\" --coverage.exclude \"src/**/*.test.ts\"",
+    "test:ui": "vitest --environment happy-dom --ui --coverage.enabled=true --coverage.include \"src/**/*.ts\" --coverage.exclude \"src/**/*.test.ts\"",
+    "test:watch": "vitest --environment happy-dom",
+    "test:watch-cov": "vitest --environment happy-dom --coverage --coverage.reporter=text --coverage.reporter=lcov --coverage.include \"src/**/*.ts\" --coverage.exclude \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@typescript/ata": "^0.9.8",
@@ -50,6 +55,8 @@
     "@types/react-dom": "^19.2.3",
     "@types/semver": "^7.7.1",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.2",
+    "@vitest/ui": "^4.1.2",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^4.4.4",
@@ -62,12 +69,14 @@
     "eslint-plugin-sonarjs": "^4.0.2",
     "eslint-plugin-sort-destructure-keys": "^3.0.0",
     "globals": "^17.4.0",
+    "happy-dom": "^20.8.9",
     "patch-package": "^8.0.1",
     "prettier": "^3.8.1",
     "prettier-plugin-packagejson": "^3.0.2",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "tailwindcss": "^4.2.2",
     "typescript-eslint": "^8.57.2",
-    "vite": "^8.0.3"
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2"
   }
 }
