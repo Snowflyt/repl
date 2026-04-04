@@ -103,6 +103,14 @@ function rewriteCodeForAta(code: string): { code: string; packages: string[] } {
     // Append end-of-line comment for ATA version
     return pre + q + name + q2 + " // types: " + version;
   });
+  // Side-effect import: import "spec" (no `from` keyword, no bindings)
+  const reSideEffect = /(\bimport\s+)(["'])([^"']+)(\2)/g;
+  code = code.replace(reSideEffect, (_m, pre: string, q: string, spec: string, q2: string) => {
+    const { name, version } = parsePackageAndVersion(spec);
+    if (name && !name.startsWith(".") && !name.startsWith("/")) packages.add(toBasePackage(name));
+    if (!version) return pre + q + spec + q2;
+    return pre + q + name + q2 + " // types: " + version;
+  });
   // Dynamic import("spec")
   const reDyn = /(\bimport\s*\(\s*)(["'])([^"']+)(\2)(\s*\))/g;
   code = code.replace(
@@ -774,6 +782,28 @@ function buildEnvFromSnippets(snippets: string[]): string {
           valueDecls.set(name, { text: full, order: ++order });
         }
       }
+
+      // Scan every statement for dynamic import() calls with bare specifiers.
+      // Register them as side-effect imports so ATA can acquire types for those packages.
+      const scanDynamicImports = (n: ts.Node): void => {
+        if (
+          ts.isCallExpression(n) &&
+          n.expression.kind === ts.SyntaxKind.ImportKeyword &&
+          n.arguments.length >= 1 &&
+          ts.isStringLiteral(n.arguments[0]!)
+        ) {
+          const spec = n.arguments[0].text;
+          if (spec && !spec.startsWith(".") && !spec.startsWith("/") && !spec.includes("://")) {
+            const rec = ensureModuleRecord(spec);
+            if (rec.sideEffectOrder === null) {
+              rec.sideEffectOrder = ++order;
+              if (rec.firstOrder === null) rec.firstOrder = rec.sideEffectOrder;
+            }
+          }
+        }
+        ts.forEachChild(n, scanDynamicImports);
+      };
+      scanDynamicImports(node);
     }
   }
 

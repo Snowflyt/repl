@@ -285,16 +285,6 @@ export class Sandbox {
     let codeToExecute = "";
     const imports: string[] = [];
 
-    // Helper: convert bare npm specifier to CDN URL
-    const toCdnUrl = (modulePath: string): string => {
-      const isBare =
-        /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@latest|@alpha|@beta|@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
-          modulePath,
-        );
-      if (isBare) return "https://esm.sh/" + modulePath;
-      return modulePath;
-    };
-
     // Traverse every statement in the AST
     for (let i = 0; i < sourceFile.statements.length; i++) {
       const statement = sourceFile.statements[i]!;
@@ -321,7 +311,7 @@ export class Sandbox {
           ts.isStringLiteral((modRef as any).expression)
         ) {
           const mod = ((modRef as any).expression as ts.StringLiteral).text;
-          const url = toCdnUrl(mod);
+          const url = Sandbox.#toCdnUrl(mod);
           codeLine =
             `const __mod_${name} = await import("${url}");` +
             `\nconst ${name} = ("default" in __mod_${name} ? __mod_${name}.default : __mod_${name});`;
@@ -378,6 +368,7 @@ export class Sandbox {
       },
       fileName: "repl_exec.ts",
       reportDiagnostics: false,
+      transformers: { before: [Sandbox.#rewriteDynamicImports()] },
     });
     const jsExec = execTranspiled.outputText;
 
@@ -403,6 +394,56 @@ export class Sandbox {
   }
 
   /**
+   * Checks if a module specifier is a bare npm package name (e.g. `react`, `@scope/pkg`,
+   * `dayjs/plugin/duration`), as opposed to a relative or absolute path.
+   * See: https://stackoverflow.com/a/64880672/21418758
+   * @returns `true` if the specifier is a bare npm package name, `false` otherwise.
+   */
+  static #isBareSpecifier(specifier: string): boolean {
+    return /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](\/|@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@latest|@alpha|@beta|@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
+      specifier,
+    );
+  }
+
+  static #toCdnUrl(specifier: string): string {
+    return Sandbox.#isBareSpecifier(specifier) ? "https://esm.sh/" + specifier : specifier;
+  }
+
+  /**
+   * Creates a TypeScript transformer that rewrites bare specifiers inside dynamic
+   * `import()` calls to esm.sh CDN URLs. Only rewrites string-literal arguments.
+   * @returns The transformer factory.
+   */
+  static #rewriteDynamicImports(): ts.TransformerFactory<ts.SourceFile> {
+    return (context) => {
+      const visitor: ts.Visitor = (node) => {
+        if (
+          ts.isCallExpression(node) &&
+          node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+          node.arguments.length >= 1 &&
+          ts.isStringLiteral(node.arguments[0]!)
+        ) {
+          const specifier = node.arguments[0].text;
+          if (Sandbox.#isBareSpecifier(specifier)) {
+            const newArgs = [
+              context.factory.createStringLiteral("https://esm.sh/" + specifier),
+              ...node.arguments.slice(1),
+            ] as unknown as ts.NodeArray<ts.Expression>;
+            return context.factory.updateCallExpression(
+              node,
+              node.expression,
+              node.typeArguments,
+              newArgs,
+            );
+          }
+        }
+        return ts.visitEachChild(node, visitor, context);
+      };
+      return (sourceFile) => ts.visitNode(sourceFile, visitor) as ts.SourceFile;
+    };
+  }
+
+  /**
    * Transforms an import statement into a dynamic import from esm.sh CDN.
    * @param importDecl The import declaration node.
    * @returns The transformed import statement and the variables it declares.
@@ -418,16 +459,7 @@ export class Sandbox {
     if (importDecl.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword) return null;
 
     const modulePath = importDecl.moduleSpecifier.text;
-    const url =
-      // Check if the module specifier starts with a valid npm package name
-      // See: https://stackoverflow.com/a/64880672/21418758
-      (
-        /^(@(?![.-])(?!.*[.-]\/)(?!.*(\.\.|--))[a-z0-9\-_.]+\/)?(?![.-])(?!.*[.-](\/|@|$))(?!.*(\.\.|--))[a-z0-9\-_.]+(@latest|@alpha|@beta|@[~^]?([\dvx*]+(?:[-.](?:[\dx*]+|alpha|beta))*))?(\/|$)/i.test(
-          modulePath,
-        )
-      ) ?
-        "https://esm.sh/" + modulePath
-      : modulePath;
+    const url = Sandbox.#toCdnUrl(modulePath);
     const variables: string[] = [];
 
     // Handle side-effect import: import 'module';
