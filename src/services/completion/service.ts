@@ -76,8 +76,13 @@ export class CompletionService {
   async analyzeTrigger(
     code: string,
     cursor: number,
+    options?: { sessionActive?: boolean },
   ): Promise<{ kind: "open" | "refresh" | "close" | "noop"; delay?: number }> {
-    return this.#call("analyzeTrigger", { code, cursor });
+    return this.#call("analyzeTrigger", {
+      code,
+      cursor,
+      ...(options?.sessionActive !== undefined ? { sessionActive: options.sessionActive } : {}),
+    });
   }
 
   async getDetail(

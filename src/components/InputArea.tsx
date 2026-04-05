@@ -1010,47 +1010,6 @@ const InputArea: React.FC<InputAreaProps> = ({
                     list.scrollTop = Math.max(0, Math.round(target / rowH) * rowH);
                   }
                 };
-                if (e.key === "Backspace") {
-                  // After the deletion occurs, decide whether to keep and refresh suggestions
-                  const el = e.currentTarget;
-                  setTimeout(() => {
-                    // For commands, only suppress when not in :check or :type expression context
-                    const pos = el.selectionStart;
-                    const val = el.value;
-                    const tf = transformForTypeMode(val, pos);
-                    const ck = getCheckExprStart(val, pos);
-                    if (isReplCommand(val) && !tf && ck === null) {
-                      setSuggestions(null);
-                      return;
-                    }
-                    if (el.selectionStart !== el.selectionEnd) {
-                      // If there's a selection, hide popup and skip
-                      setSuggestions(null);
-                      return;
-                    }
-                    if (!settings.editor.intellisense) {
-                      setSuggestions(null);
-                      return;
-                    }
-                    const reqCode = tf ? tf.code : val;
-                    const reqPos = tf ? tf.pos : pos;
-                    void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
-                      if (action.kind === "close") {
-                        setSuggestions(null);
-                        dotFastRef.current = false;
-                        return;
-                      }
-                      if (action.kind === "open" || action.kind === "refresh") {
-                        if (el.selectionStart !== el.selectionEnd) return;
-                        updateCaretPosition();
-                        // Backspace-led triggers are not dot-initiated
-                        dotFastRef.current = false;
-                        scheduleCompletionsFromEl(el, action.delay ?? 35);
-                      }
-                    });
-                  }, 0);
-                  // Do not prevent default; allow deletion
-                }
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
                   const len = suggestions.length;
@@ -1264,13 +1223,17 @@ const InputArea: React.FC<InputAreaProps> = ({
                 if (!(isReplCommand(newValue) && !tf && ck === null)) {
                   const reqCode = tf ? tf.code : newValue;
                   const reqPos = tf ? tf.pos : pos;
-                  void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
-                    if (action.kind === "open" || action.kind === "refresh") {
-                      if (el.selectionStart !== el.selectionEnd) return;
-                      dotFastRef.current = false;
-                      scheduleCompletionsFromEl(el, action.delay ?? 35);
-                    }
-                  });
+                  void completionService
+                    .analyzeTrigger(reqCode, reqPos, {
+                      sessionActive: hadVisibleSuggestions,
+                    })
+                    .then((action) => {
+                      if (action.kind === "open" || action.kind === "refresh") {
+                        if (el.selectionStart !== el.selectionEnd) return;
+                        dotFastRef.current = false;
+                        scheduleCompletionsFromEl(el, action.delay ?? 35);
+                      }
+                    });
                 }
               }
               if (!settings.editor.intellisense) {
@@ -1289,90 +1252,93 @@ const InputArea: React.FC<InputAreaProps> = ({
               }
               const reqCode = tf ? tf.code : newValue;
               const reqPos = tf ? tf.pos : pos;
-              void completionService.analyzeTrigger(reqCode, reqPos).then((action) => {
-                if (action.kind === "close") {
-                  setSuggestions(null);
-                  dotFastRef.current = false;
-                  // When Backspace edits an active completion session, let the dedicated
-                  // Backspace refresh path decide whether completions reopen, instead of
-                  // briefly switching the UI to signature help first.
-                  if (isBackspaceDeletion && hadVisibleSuggestions) {
-                    invalidateSignatureHelp();
-                    return;
-                  }
-                  // Attempt signature help in call context when list is closed
-                  const keepSignatureVisible = !!callDetail;
-                  const signatureSeq = ++signatureSeqRef.current;
-                  if (keepSignatureVisible) setIsSignaturePending(true);
-                  void completionService
-                    .getSignatureHelp(reqCode, reqPos)
-                    .then((res) => {
-                      if (signatureSeq !== signatureSeqRef.current) return;
-                      // pick active signature if available
-                      const idx = Math.max(
-                        0,
-                        Math.min(res.items.length - 1, res.selectedItemIndex || 0),
-                      );
-                      const it = res.items[idx];
-                      if (it && (it.signature || it.documentation)) {
-                        const parts = it.parts;
-                        const sigParts =
-                          parts ?
-                            {
-                              prefix: parts.prefix,
-                              separator: parts.separator,
-                              suffix: parts.suffix,
-                              params: parts.params,
-                              activeIndex: res.argumentIndex,
-                            }
-                          : undefined;
-                        const detail = {
-                          detail: it.signature,
-                          ...(it.documentation !== undefined ?
-                            { documentation: it.documentation }
-                          : {}),
-                          ...(sigParts !== undefined ? { sigParts } : {}),
-                        };
-                        if (signatureSeq !== signatureSeqRef.current) return;
-                        setCallDetail(detail);
-                        // Pre-render docs HTML
-                        const key = `sig|${it.signature}`;
-                        const doc = it.documentation ?? "";
-                        if (doc && !docHtmlCacheRef.current.has(key)) {
-                          scheduleIdle(() => {
-                            try {
-                              const html = (md.parse(doc) as string) || "";
-                              docHtmlCacheRef.current.set(key, html);
-                              setDocHtmlVersion((v) => v + 1);
-                            } catch (e) {
-                              // Ignore
-                            }
-                          });
-                        }
-                      } else {
-                        if (signatureSeq !== signatureSeqRef.current) return;
-                        setCallDetail(null);
-                      }
-                    })
-                    .finally(() => {
-                      if (signatureSeq === signatureSeqRef.current) setIsSignaturePending(false);
-                    });
-                  return;
-                }
-                if (action.kind === "open" || action.kind === "refresh") {
-                  if (el.selectionStart !== el.selectionEnd) {
+              void completionService
+                .analyzeTrigger(reqCode, reqPos, {
+                  sessionActive: hadVisibleSuggestions,
+                })
+                .then((action) => {
+                  if (action.kind === "close") {
                     setSuggestions(null);
-                    setCallDetail(null);
+                    dotFastRef.current = false;
+                    // When Backspace edits an active completion session and we still land on
+                    // a real close, avoid briefly switching the UI to signature help.
+                    if (isBackspaceDeletion && hadVisibleSuggestions) {
+                      invalidateSignatureHelp();
+                      return;
+                    }
+                    // Attempt signature help in call context when list is closed
+                    const keepSignatureVisible = !!callDetail;
+                    const signatureSeq = ++signatureSeqRef.current;
+                    if (keepSignatureVisible) setIsSignaturePending(true);
+                    void completionService
+                      .getSignatureHelp(reqCode, reqPos)
+                      .then((res) => {
+                        if (signatureSeq !== signatureSeqRef.current) return;
+                        // pick active signature if available
+                        const idx = Math.max(
+                          0,
+                          Math.min(res.items.length - 1, res.selectedItemIndex || 0),
+                        );
+                        const it = res.items[idx];
+                        if (it && (it.signature || it.documentation)) {
+                          const parts = it.parts;
+                          const sigParts =
+                            parts ?
+                              {
+                                prefix: parts.prefix,
+                                separator: parts.separator,
+                                suffix: parts.suffix,
+                                params: parts.params,
+                                activeIndex: res.argumentIndex,
+                              }
+                            : undefined;
+                          const detail = {
+                            detail: it.signature,
+                            ...(it.documentation !== undefined ?
+                              { documentation: it.documentation }
+                            : {}),
+                            ...(sigParts !== undefined ? { sigParts } : {}),
+                          };
+                          if (signatureSeq !== signatureSeqRef.current) return;
+                          setCallDetail(detail);
+                          // Pre-render docs HTML
+                          const key = `sig|${it.signature}`;
+                          const doc = it.documentation ?? "";
+                          if (doc && !docHtmlCacheRef.current.has(key)) {
+                            scheduleIdle(() => {
+                              try {
+                                const html = (md.parse(doc) as string) || "";
+                                docHtmlCacheRef.current.set(key, html);
+                                setDocHtmlVersion((v) => v + 1);
+                              } catch (e) {
+                                // Ignore
+                              }
+                            });
+                          }
+                        } else {
+                          if (signatureSeq !== signatureSeqRef.current) return;
+                          setCallDetail(null);
+                        }
+                      })
+                      .finally(() => {
+                        if (signatureSeq === signatureSeqRef.current) setIsSignaturePending(false);
+                      });
                     return;
                   }
-                  // Fast-path: if the last typed character was a dot, reduce overscan
-                  const isDot = reqPos > 0 && reqCode[reqPos - 1] === ".";
-                  dotFastRef.current = isDot;
-                  scheduleCompletionsFromEl(el, action.delay ?? 35);
-                  // Hide signature help while showing suggestions
-                  setCallDetail(null);
-                }
-              });
+                  if (action.kind === "open" || action.kind === "refresh") {
+                    if (el.selectionStart !== el.selectionEnd) {
+                      setSuggestions(null);
+                      setCallDetail(null);
+                      return;
+                    }
+                    // Fast-path: if the last typed character was a dot, reduce overscan
+                    const isDot = reqPos > 0 && reqCode[reqPos - 1] === ".";
+                    dotFastRef.current = isDot;
+                    scheduleCompletionsFromEl(el, action.delay ?? 35);
+                    // Hide signature help while showing suggestions
+                    setCallDetail(null);
+                  }
+                });
             }}
             className={clsx(
               "order-0 w-full resize-none appearance-none bg-transparent p-0 font-mono tracking-normal break-all whitespace-pre-wrap text-gray-100 placeholder:text-[#6c7086] focus:outline-none",

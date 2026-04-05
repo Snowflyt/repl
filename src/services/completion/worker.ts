@@ -1731,7 +1731,15 @@ const handlers = {
     }
   },
 
-  async analyzeTrigger({ code, cursor }: { code: string; cursor: number }) {
+  async analyzeTrigger({
+    code,
+    cursor,
+    sessionActive = false,
+  }: {
+    code: string;
+    cursor: number;
+    sessionActive?: boolean;
+  }) {
     await ensureEnv();
     // Capture previous code to detect single-character deletions (e.g., Backspace)
     const prevCode = lastCode;
@@ -1760,7 +1768,9 @@ const handlers = {
     const del = detectSingleDeletion(prevCode, code);
     if (del) {
       const allNonIdent = Array.from(del.deleted).every((ch) => !isIdentChar(ch));
-      if (allNonIdent) return { kind: "close" as const };
+      // Keep active completion sessions sticky across punctuation deletions so the
+      // UI can refresh in place instead of briefly dismissing and reopening.
+      if (allNonIdent && !sessionActive) return { kind: "close" as const };
     }
     const last = code[cursor - 1];
     // '.' opens immediately
