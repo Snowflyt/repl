@@ -135,6 +135,13 @@ const InputArea: React.FC<InputAreaProps> = ({
   const keySeqRef = useRef(0);
   // Fast-path hint for '.' member access to reduce overscan in the popup
   const dotFastRef = useRef(false);
+  // Lets completion-opening paths cancel stale signature-help requests/results.
+  const signatureSeqRef = useRef(0);
+  const invalidateSignatureHelp = useCallback(() => {
+    signatureSeqRef.current++;
+    setIsSignaturePending(false);
+    setCallDetail(null);
+  }, []);
 
   const resetInput = useCallback(() => {
     // Invalidate any pending completion or detail requests and hide UI
@@ -864,6 +871,7 @@ const InputArea: React.FC<InputAreaProps> = ({
   // Variant that reads fresh code/pos at execution time and skips if a newer key event occurred
   const scheduleCompletionsFromEl = useCallback(
     (el: HTMLTextAreaElement, delay = 50) => {
+      invalidateSignatureHelp();
       const token = keySeqRef.current;
       if (debounceTimerRef.current) {
         window.clearTimeout(debounceTimerRef.current);
@@ -877,7 +885,7 @@ const InputArea: React.FC<InputAreaProps> = ({
         void requestCompletions(code, pos);
       }, delay);
     },
-    [requestCompletions, settings.editor.intellisense],
+    [invalidateSignatureHelp, requestCompletions, settings.editor.intellisense],
   );
 
   /* Expose methods */
@@ -1219,6 +1227,8 @@ const InputArea: React.FC<InputAreaProps> = ({
               // See UI Events spec inputType list: https://w3c.github.io/input-events/#interface-InputEvent-Attributes
               const inputEvent = e.nativeEvent as unknown as { inputType?: string };
               const it = inputEvent.inputType ?? "";
+              const isBackspaceDeletion = it === "deleteContentBackward";
+              const hadVisibleSuggestions = !!suggestions?.length;
               const nonTyping =
                 // Pasting / dragging / yank buffer
                 it === "insertFromPaste" ||
@@ -1283,12 +1293,21 @@ const InputArea: React.FC<InputAreaProps> = ({
                 if (action.kind === "close") {
                   setSuggestions(null);
                   dotFastRef.current = false;
+                  // When Backspace edits an active completion session, let the dedicated
+                  // Backspace refresh path decide whether completions reopen, instead of
+                  // briefly switching the UI to signature help first.
+                  if (isBackspaceDeletion && hadVisibleSuggestions) {
+                    invalidateSignatureHelp();
+                    return;
+                  }
                   // Attempt signature help in call context when list is closed
                   const keepSignatureVisible = !!callDetail;
+                  const signatureSeq = ++signatureSeqRef.current;
                   if (keepSignatureVisible) setIsSignaturePending(true);
                   void completionService
                     .getSignatureHelp(reqCode, reqPos)
                     .then((res) => {
+                      if (signatureSeq !== signatureSeqRef.current) return;
                       // pick active signature if available
                       const idx = Math.max(
                         0,
@@ -1314,6 +1333,7 @@ const InputArea: React.FC<InputAreaProps> = ({
                           : {}),
                           ...(sigParts !== undefined ? { sigParts } : {}),
                         };
+                        if (signatureSeq !== signatureSeqRef.current) return;
                         setCallDetail(detail);
                         // Pre-render docs HTML
                         const key = `sig|${it.signature}`;
@@ -1330,10 +1350,13 @@ const InputArea: React.FC<InputAreaProps> = ({
                           });
                         }
                       } else {
+                        if (signatureSeq !== signatureSeqRef.current) return;
                         setCallDetail(null);
                       }
                     })
-                    .finally(() => setIsSignaturePending(false));
+                    .finally(() => {
+                      if (signatureSeq === signatureSeqRef.current) setIsSignaturePending(false);
+                    });
                   return;
                 }
                 if (action.kind === "open" || action.kind === "refresh") {
